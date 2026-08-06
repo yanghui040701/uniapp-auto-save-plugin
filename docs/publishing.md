@@ -45,8 +45,8 @@
 | 个人身份与门户字段 | 门户当天复核 | 登录后按页面当时要求确认个人身份、联系信息、协议与实际必填字段；没有一手依据证明学生有独立入口或豁免。 |
 | 图片规格、操作按钮与审核流程 | 门户当天复核 | 是否需要封面、图片规格、按钮名称以及是否进入审核，以提交时门户实际界面为准。 |
 | 插件 ID 唯一性 | 尚未完成 | 必须在登录后的创建或提交表单最终校验；公开搜索不能替代此步骤。 |
-| metadata 校验、打包与 ZIP 检查 | 尚未完成 | 等后续 Task 7 提供校验/打包脚本后执行，并记录 metadata 严格校验、ZIP 内容与哈希；这与本轮已经通过的 NODE_OPTIONS strict 完整测试不同。 |
-| 干净环境导入与卸载 | 尚未完成 | 发行 ZIP 生成后在干净 HBuilderX 环境实测。 |
+| metadata 校验、打包与 ZIP 检查 | 已证实 | 2026-08-06 已完成普通测试、`NODE_OPTIONS=--unhandled-rejections=strict` 完整测试、9 文件 metadata 校验、打包及 ZIP 条目检查；实际产物记录见下方验证结果。 |
+| 干净环境导入与卸载 | 尚未完成 | staging 目录已在 HBuilderX 5.15 中全新安装并完成实际测试，但只读文件矩阵失败且命令入口未能安全执行；修复并复测前阻塞发布，尚未执行发布候选卸载验收。 |
 | 截图制作 | 尚未完成 | 在空白测试项目中实拍并清除敏感信息。 |
 | 仓库与 Issues 可访问性 | 尚未完成 | 当前填写的 GitHub URL 尚未返回公开页面，发布前必须创建或公开并复核。 |
 | 门户最终提交或发布 | 尚未完成 | 只有门户返回成功状态后才能对外声称已发布。 |
@@ -82,6 +82,31 @@
 - `package.json` 的 ID、版本、发布者、最低 HBuilderX 和声明与本页一致；
 - 在干净的 HBuilderX 测试环境中，将解包目录命名为 `yanghui-auto-save` 并放入 `plugins` 目录，重启后能加载、配置、保存及卸载；
 - 最终上传前重新运行普通完整测试、`NODE_OPTIONS=--unhandled-rejections=strict` 完整测试、Task 7 metadata 严格校验和打包命令，并记录产物哈希。
+
+## 2026-08-06 Windows / HBuilderX 5.15 发布验证
+
+- 操作系统：Windows 10 家庭中文版（中国），版本 25H2，OS build `26200.8875`。
+- HBuilderX：`5.15.2026070915`。
+- 验证日期：`2026-08-06`。
+- 安装方式：仅在确认目标不存在后，新建 `plugins/yanghui-auto-save` 并复制 staging；9 个文件逐项 SHA-256 与 `dist/yanghui-auto-save` 一致。HBuilderX 日志确认插件发现、激活成功。
+- 自动验证：普通 `npm test` 与 `NODE_OPTIONS=--unhandled-rejections=strict npm test` 均为 156/156 PASS；`npm run validate` 验证 9 个发布文件；`npm run package`、`git diff --check` 均 PASS。
+- 最终产物：`dist/yanghui-auto-save.zip`，12741 bytes，SHA-256 `BB626B2841F5409BE86DD5FA6A7B8B0555B7EFC9848364A5E344706156A69C93`；ZIP 仅含单一 `yanghui-auto-save/` 根目录下的 9 个允许文件。
+- 环境隔离：真实 HBuilderX 中原有 `z-auto-saver` 也会在 1000 ms 后保存。为避免归因歧义，仅通过 HBuilderX 插件配置 UI 临时设为 `false`；矩阵结束后已恢复为 `true`。测试文件均位于打包目录下的临时忽略目录，不涉及用户项目。
+
+| 序号 | 结果 | 证据 |
+| --- | --- | --- |
+| 1 | PASS | 在另一自动保存插件禁用后复测默认 1000 ms：磁盘 mtime 相对最后输入约 992 ms 更新，日志只有本插件的一次 `workbench.action.files.save`，标签页 dirty `*` 清除。 |
+| 2 | PASS | 连续输入 3.6 秒；12 次磁盘采样均未变化且 HBuilderX 全程响应，最后一次输入后约 966 ms 保存。 |
+| 3 | PASS | 编辑后 528 ms 内切换文件；旧文件由已开启的 HBuilderX 原生失焦保存更新，新文件在旧 10000 ms 定时器到期后仍未变化，日志无旧任务保存命令。 |
+| 4 | PASS | 编辑后 204 ms 切换至另一应用；旧文件约 54 ms 后由 HBuilderX 原生失焦保存更新。 |
+| 5 | PASS | 插件配置 UI 将延迟改为 200 ms 后，磁盘 mtime 在输入后约 200 ms 更新；改为 10000 ms 后，1.4、5.3、9.3 秒采样均未更新，约 10.0 秒更新。两次均无需重启。 |
+| 6 | PASS | 配置 UI 设 `enabled=false` 后，后续编辑等待 11 秒磁盘仍未变化，标签页保留 dirty `*`，期间无保存命令；配置变化同时清理已有控制器任务的自动测试也已通过。 |
+| 7 | PASS | 配置 UI 重新设 `enabled=true`，下一次编辑约 992 ms 后恢复保存，无需重启。 |
+| 8 | FAIL | Windows 只读属性的隔离文件仍可在 HBuilderX 中编辑；停止输入后插件调用保存并出现“无法保存文件，请检查权限或文件是否处于只读状态”。磁盘未被改写，但插件未在调用保存前识别该只读文件。未命名文件入口未另行执行。 |
+| 9 | NOT_RUN | HBuilderX 5.15 中 `Ctrl+Shift+P` 未打开命令面板；当前 Computer Use helper 又无法执行 UI 输入/状态调用。为避免继续误输入测试文件，未猜测其他快捷键。测试前后只读配置均确认 `editor.saveOnFocusLost=true`，但这不能替代命令本身的验证。 |
+| 10 | PASS | 通过隔离文件的可恢复只读属性制造保存失败；磁盘未变化，只出现一个可见 HBuilderX 保存失败对话框。额外等待 3 秒无新日志或重复对话框；取消后恢复文件可写。 |
+
+发布结论：**阻塞发布**。第 8 项与设计声明不一致，且第 9 项尚未实际执行；修复只读文件识别并在可用的命令入口重新执行第 8、9 项之前，不得发布或声称 HBuilderX 5.15 完整矩阵通过。
 
 ## 截图清单
 
