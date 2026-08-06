@@ -130,6 +130,18 @@
 
 要重置提示：完全退出 HBuilderX，删除对应的 `state.json`，再启动 HBuilderX。删除状态文件只会让插件重新询问，不会改变 `editor.saveOnFocusLost` 当前值；需要关闭原生失焦保存时，请在 HBuilderX 设置中手动关闭。
 
+## 本地验证与打包
+
+在 Windows PowerShell 中进入仓库根目录，依次运行：
+
+```powershell
+npm test
+npm run validate
+npm run package
+```
+
+`npm run package` 会先重复运行完整测试和发布白名单校验，任一步失败都会停止。最终上传候选文件是 `dist/yanghui-auto-save.zip`；压缩包内只有一个顶层 `yanghui-auto-save` 目录及经过校验的 9 个发布文件。`dist/yanghui-auto-save/` 暂存目录也会保留，便于发布前检查。
+
 ## 反馈与许可证
 
 - 作者：`yanghui040701`
