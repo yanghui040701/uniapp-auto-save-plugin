@@ -97,22 +97,29 @@ try {
     }
 
     $expectedAllowlist = @(
+        'package.json',
+        'extension.js',
+        'README.md',
         'CHANGELOG.md',
         'LICENSE',
-        'README.md',
-        'extension.js',
         'lib/auto-save-controller.js',
-        'lib/focus-save-coordinator.js',
         'lib/hbuilderx-runtime.js',
-        'lib/prompt-state.js',
-        'package.json'
+        'lib/focus-save-coordinator.js',
+        'lib/prompt-state.js'
     )
     $copyPlan = @()
-    $normalizedFiles = @()
-    foreach ($file in $files) {
+    $canonicalSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($canonicalFile in $expectedAllowlist) {
+        [void]$canonicalSet.Add($canonicalFile)
+    }
+    $seenFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+
+    for ($index = 0; $index -lt $files.Count; $index++) {
+        $file = $files[$index]
         if (
             $file -isnot [string] -or
             [string]::IsNullOrWhiteSpace($file) -or
+            $file -match '\s' -or
             [System.IO.Path]::IsPathRooted($file) -or
             $file.Contains('\') -or
             $file.Contains(':')
@@ -123,30 +130,31 @@ try {
         if ($segments.Count -eq 0 -or @($segments | Where-Object { $_ -eq '' -or $_ -eq '.' -or $_ -eq '..' }).Count -ne 0) {
             throw "PACKAGE_VALIDATION_FAILED: validator returned an unsafe allowlist entry"
         }
-        if ($normalizedFiles -contains $file) {
+        if (-not $seenFiles.Add($file)) {
             throw "PACKAGE_VALIDATION_FAILED: validator returned a duplicate allowlist entry"
         }
-        $normalizedFiles += $file
+        if (-not $canonicalSet.Contains($file)) {
+            throw "PACKAGE_VALIDATION_FAILED: validator returned an unexpected allowlist entry"
+        }
+        $canonicalFile = $expectedAllowlist[$index]
+        if (-not [System.StringComparer]::Ordinal.Equals($file, $canonicalFile)) {
+            throw "PACKAGE_VALIDATION_FAILED: validator allowlist order or casing is not canonical"
+        }
 
-        $source = Assert-SafeChildPath -Root $root -Candidate (Join-Path $root $file) -Label "source $file"
+        $source = Assert-SafeChildPath -Root $root -Candidate (Join-Path $root $canonicalFile) -Label "source $canonicalFile"
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-            throw "PACKAGE_VALIDATION_FAILED: allowlisted source is not an ordinary file: $file"
+            throw "PACKAGE_VALIDATION_FAILED: allowlisted source is not an ordinary file: $canonicalFile"
         }
         $sourceItem = Get-Item -LiteralPath $source -Force
         if ($sourceItem.PSIsContainer -or ($sourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "PACKAGE_VALIDATION_FAILED: allowlisted source is not an ordinary file: $file"
+            throw "PACKAGE_VALIDATION_FAILED: allowlisted source is not an ordinary file: $canonicalFile"
         }
-        $destination = Assert-SafeChildPath -Root $root -Candidate (Join-Path $stagingDir $file) -Label "destination $file"
+        $destination = Assert-SafeChildPath -Root $root -Candidate (Join-Path $stagingDir $canonicalFile) -Label "destination $canonicalFile"
         $copyPlan += [PSCustomObject]@{
-            File = $file
+            File = $canonicalFile
             Source = $source
             Destination = $destination
         }
-    }
-
-    $allowlistDifference = @(Compare-Object -ReferenceObject ($expectedAllowlist | Sort-Object) -DifferenceObject ($normalizedFiles | Sort-Object))
-    if ($allowlistDifference.Count -ne 0) {
-        throw 'PACKAGE_VALIDATION_FAILED: validator returned unexpected allowlist values'
     }
 
     # Destructive cleanup begins only after every test, validation, path, allowlist,
@@ -179,8 +187,9 @@ try {
     try {
         $normalizedEntries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
         $actualFiles = @($normalizedEntries | Where-Object { -not $_.EndsWith('/') } | Sort-Object)
-        $expectedFiles = @($copyPlan | ForEach-Object { "yanghui-auto-save/$($_.File)" } | Sort-Object)
-        $difference = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles)
+        $expectedFiles = @($expectedAllowlist | ForEach-Object { "yanghui-auto-save/$_" } | Sort-Object -CaseSensitive)
+        $actualFiles = @($actualFiles | Sort-Object -CaseSensitive)
+        $difference = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles -CaseSensitive)
         if ($actualFiles.Count -ne 9 -or $difference.Count -ne 0) {
             throw 'PACKAGE_ARCHIVE_INVALID: ZIP file entries do not match the validator allowlist'
         }

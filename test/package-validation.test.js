@@ -18,6 +18,18 @@ const EXPECTED_FILES = [
   'package.json'
 ];
 
+const CANONICAL_FILES = [
+  'package.json',
+  'extension.js',
+  'README.md',
+  'CHANGELOG.md',
+  'LICENSE',
+  'lib/auto-save-controller.js',
+  'lib/hbuilderx-runtime.js',
+  'lib/focus-save-coordinator.js',
+  'lib/prompt-state.js'
+];
+
 const VALID_MANIFEST = {
   id: 'yanghui-auto-save',
   version: '1.0.0',
@@ -301,7 +313,7 @@ test('package script stops before cleanup when npm test fails', (t) => {
 });
 
 test('every allowlist preflight failure preserves old staging and ZIP artifacts', async (t) => {
-  const allowlistJson = JSON.stringify(EXPECTED_FILES);
+  const allowlistJson = JSON.stringify(CANONICAL_FILES);
   const cases = [
     ['allowlist query exits nonzero', 'process.exit(17)'],
     ['allowlist query emits malformed JSON', "process.stdout.write('not json')"],
@@ -309,11 +321,57 @@ test('every allowlist preflight failure preserves old staging and ZIP artifacts'
     [
       'allowlist query emits a traversal path',
       `process.stdout.write(${JSON.stringify(JSON.stringify([
-        ...EXPECTED_FILES.slice(0, 8),
+        ...CANONICAL_FILES.slice(0, 8),
         '../outside.txt'
       ]))})`
     ],
-    ['allowlisted source is missing', `process.stdout.write(${JSON.stringify(allowlistJson)})`]
+    ['allowlisted source is missing', `process.stdout.write(${JSON.stringify(allowlistJson)})`],
+    [
+      'package.json has an uppercase variant',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([
+        'PACKAGE.JSON',
+        ...CANONICAL_FILES.slice(1)
+      ]))})`
+    ],
+    [
+      'lib path has an uppercase variant',
+      `process.stdout.write(${JSON.stringify(JSON.stringify(CANONICAL_FILES.map((file) =>
+        file === 'lib/prompt-state.js' ? 'Lib/prompt-state.js' : file
+      )))})`
+    ],
+    [
+      'allowlist contains an exact duplicate',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([
+        ...CANONICAL_FILES.slice(0, 8),
+        'package.json'
+      ]))})`
+    ],
+    [
+      'allowlist contains the canonical set in a different order',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([
+        CANONICAL_FILES[1],
+        CANONICAL_FILES[0],
+        ...CANONICAL_FILES.slice(2)
+      ]))})`
+    ],
+    [
+      'allowlist contains a dot segment',
+      `process.stdout.write(${JSON.stringify(JSON.stringify(CANONICAL_FILES.map((file) =>
+        file === 'lib/prompt-state.js' ? 'lib/./prompt-state.js' : file
+      )))})`
+    ],
+    [
+      'allowlist contains whitespace',
+      `process.stdout.write(${JSON.stringify(JSON.stringify(CANONICAL_FILES.map((file) =>
+        file === 'README.md' ? ' README.md' : file
+      )))})`
+    ],
+    [
+      'allowlist contains a backslash path',
+      `process.stdout.write(${JSON.stringify(JSON.stringify(CANONICAL_FILES.map((file) =>
+        file === 'lib/prompt-state.js' ? 'lib\\prompt-state.js' : file
+      )))})`
+    ]
   ];
 
   for (const [name, filesJsonBranch] of cases) {
