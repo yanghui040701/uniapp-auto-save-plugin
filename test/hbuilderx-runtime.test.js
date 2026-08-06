@@ -353,10 +353,15 @@ test('save errors replace suspicious reasons with one fixed explanation', async 
     'disk is 100% full',
     'secret\nnext line',
     'secret\ttab',
+    '\ndenied',
+    'denied\t',
     'secret\u0085next line',
+    '\u0085denied',
     'secret\u009Fcontrol',
     'secret\u2028line separator',
+    '\u2028denied',
     'secret\u2029paragraph separator',
+    'denied\u2029',
     `too long ${'x'.repeat(200)}`,
     ''
   ];
