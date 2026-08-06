@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createHBuilderXRuntime } = require('../lib/hbuilderx-runtime');
@@ -10,6 +12,19 @@ function resolvingThenable(value) {
 
 function rejectingThenable(error) {
   return { then(resolve, reject) { reject(error); } };
+}
+
+function localDocument(filePath = 'C:\\project\\index.vue') {
+  return {
+    fileName: filePath,
+    uri: { scheme: 'file', fsPath: filePath },
+    isDirty: true,
+    isUntitled: false
+  };
+}
+
+function filesystemWithAccess(access) {
+  return { promises: { access }, constants: { W_OK: 2 } };
 }
 
 function fakeHx() {
@@ -218,14 +233,157 @@ test('native setting update verifies through a fresh configuration object', asyn
 
 test('active snapshot detects both supported readonly flags', async () => {
   const hx = fakeHx();
-  const doc = { fileName: 'C:\\project\\index.vue' };
+  const doc = localDocument();
+  let filesystemAccesses = 0;
+  const filesystem = filesystemWithAccess(() => {
+    filesystemAccesses += 1;
+  });
   hx.window.getActiveTextEditor = async () => ({ document: doc, isReadonly: true });
-  assert.deepEqual(await createHBuilderXRuntime(hx).getActiveSnapshot(), {
+  assert.deepEqual(await createHBuilderXRuntime(hx, filesystem).getActiveSnapshot(), {
     document: doc,
     readOnly: true
   });
   hx.window.getActiveTextEditor = async () => ({ document: doc, readonly: true });
-  assert.equal((await createHBuilderXRuntime(hx).getActiveSnapshot()).readOnly, true);
+  assert.equal((await createHBuilderXRuntime(hx, filesystem).getActiveSnapshot()).readOnly, true);
+  assert.equal(filesystemAccesses, 0);
+});
+
+test('active snapshot maps a Windows permission rejection to readonly', async () => {
+  const hx = fakeHx();
+  const doc = localDocument('C:\\project\\readonly.vue');
+  const calls = [];
+  const filesystem = filesystemWithAccess(async (filePath, mode) => {
+    calls.push([filePath, mode]);
+    const error = new Error('operation not permitted');
+    error.code = 'EPERM';
+    throw error;
+  });
+  hx.window.getActiveTextEditor = async () => ({ document: doc });
+
+  assert.deepEqual(await createHBuilderXRuntime(hx, filesystem).getActiveSnapshot(), {
+    document: doc,
+    readOnly: true
+  });
+  assert.deepEqual(calls, [['C:\\project\\readonly.vue', 2]]);
+});
+
+test('active snapshot keeps an accessible local file writable', async () => {
+  const hx = fakeHx();
+  const doc = localDocument();
+  const calls = [];
+  const filesystem = filesystemWithAccess(async (filePath, mode) => {
+    calls.push([filePath, mode]);
+  });
+  hx.window.getActiveTextEditor = async () => ({ document: doc });
+
+  assert.deepEqual(await createHBuilderXRuntime(hx, filesystem).getActiveSnapshot(), {
+    document: doc,
+    readOnly: false
+  });
+  assert.deepEqual(calls, [['C:\\project\\index.vue', 2]]);
+});
+
+test('active snapshot does not inspect ineligible documents', async () => {
+  const scenarios = [
+    { name: 'non-local', document: { ...localDocument(), uri: { scheme: 'untitled', fsPath: 'C:\\project\\index.vue' } } },
+    { name: 'untitled', document: { ...localDocument(), isUntitled: true } },
+    { name: 'missing path', document: { ...localDocument(), uri: { scheme: 'file' } } },
+    { name: 'empty path', document: { ...localDocument(), uri: { scheme: 'file', fsPath: '' } } }
+  ];
+
+  for (const { name, document } of scenarios) {
+    const hx = fakeHx();
+    let filesystemAccesses = 0;
+    const filesystem = filesystemWithAccess(() => {
+      filesystemAccesses += 1;
+    });
+    hx.window.getActiveTextEditor = async () => ({ document });
+
+    assert.deepEqual(
+      await createHBuilderXRuntime(hx, filesystem).getActiveSnapshot(),
+      { document, readOnly: false },
+      name
+    );
+    assert.equal(filesystemAccesses, 0, name);
+  }
+});
+
+test('filesystem access assimilates a custom rejecting thenable', async () => {
+  const hx = fakeHx();
+  const doc = localDocument();
+  const error = new Error('permission denied');
+  error.code = 'EACCES';
+  const filesystem = filesystemWithAccess(() => rejectingThenable(error));
+  hx.window.getActiveTextEditor = async () => ({ document: doc });
+
+  assert.equal(
+    (await createHBuilderXRuntime(hx, filesystem).getActiveSnapshot()).readOnly,
+    true
+  );
+});
+
+test('filesystem access handles synchronous permission errors', async () => {
+  const hx = fakeHx();
+  const doc = localDocument();
+  const filesystem = filesystemWithAccess(() => {
+    const error = new Error('operation not permitted');
+    error.code = 'EPERM';
+    throw error;
+  });
+  hx.window.getActiveTextEditor = async () => ({ document: doc });
+
+  assert.equal(
+    (await createHBuilderXRuntime(hx, filesystem).getActiveSnapshot()).readOnly,
+    true
+  );
+});
+
+test('filesystem access leaves unknown errors for the normal save path', async () => {
+  const hx = fakeHx();
+  const doc = localDocument();
+  const filesystem = filesystemWithAccess(async () => {
+    const error = new Error('device unavailable');
+    error.code = 'EIO';
+    throw error;
+  });
+  hx.window.getActiveTextEditor = async () => ({ document: doc });
+
+  await assert.doesNotReject(async () => {
+    assert.equal(
+      (await createHBuilderXRuntime(hx, filesystem).getActiveSnapshot()).readOnly,
+      false
+    );
+  });
+});
+
+test('default filesystem capability detects a Windows ReadOnly temp file', {
+  skip: process.platform !== 'win32'
+}, async () => {
+  const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'yanghui-readonly-'));
+  const filePath = path.join(tempDirectory, 'readonly.vue');
+  try {
+    fs.writeFileSync(filePath, '<template />', 'utf8');
+    fs.chmodSync(filePath, 0o444);
+    const hx = fakeHx();
+    const doc = localDocument(filePath);
+    hx.window.getActiveTextEditor = async () => ({ document: doc });
+
+    assert.equal(
+      (await createHBuilderXRuntime(hx).getActiveSnapshot()).readOnly,
+      true
+    );
+  } finally {
+    try {
+      if (fs.existsSync(filePath)) fs.chmodSync(filePath, 0o666);
+    } finally {
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } finally {
+        if (fs.existsSync(tempDirectory)) fs.rmdirSync(tempDirectory);
+      }
+    }
+  }
+  assert.equal(fs.existsSync(tempDirectory), false);
 });
 
 test('active snapshot preserves document scheme, path, and dirty state', async () => {
@@ -238,7 +396,10 @@ test('active snapshot preserves document scheme, path, and dirty state', async (
   };
   hx.window.getActiveTextEditor = async () => ({ document: doc });
 
-  assert.deepEqual(await createHBuilderXRuntime(hx).getActiveSnapshot(), {
+  assert.deepEqual(await createHBuilderXRuntime(
+    hx,
+    filesystemWithAccess(async () => undefined)
+  ).getActiveSnapshot(), {
     document: doc,
     readOnly: false
   });

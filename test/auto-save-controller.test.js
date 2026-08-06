@@ -6,6 +6,7 @@ const {
   isSaveCandidate,
   createAutoSaveController
 } = require('../lib/auto-save-controller');
+const { createHBuilderXRuntime } = require('../lib/hbuilderx-runtime');
 
 function createClock() {
   let nextId = 1;
@@ -118,6 +119,49 @@ test('does not save a new active document with an old timer', async () => {
   });
   controller.handleDocumentChange({ document: changed });
   await clock.runLatest();
+  assert.equal(saves, 0);
+});
+
+test('does not save a new active document switched during filesystem access', async () => {
+  const clock = createClock();
+  const access = createDeferred();
+  const changed = document('old.vue');
+  const next = document('new.vue');
+  let activeDocument = changed;
+  let saves = 0;
+  const hx = {
+    window: {
+      async getActiveTextEditor() {
+        return { document: activeDocument };
+      }
+    },
+    commands: {
+      async executeCommand(id) {
+        assert.equal(id, 'workbench.action.files.save');
+        saves += 1;
+      }
+    }
+  };
+  const runtime = createHBuilderXRuntime(hx, {
+    promises: { access: () => access.promise },
+    constants: { W_OK: 2 }
+  });
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: () => runtime.getActiveSnapshot(),
+    saveActiveDocument: () => runtime.saveActiveDocument(),
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+
+  controller.handleDocumentChange({ document: changed });
+  const inFlight = clock.runLatest();
+  await Promise.resolve();
+  activeDocument = next;
+  access.resolve();
+  await inFlight;
+
   assert.equal(saves, 0);
 });
 
