@@ -53,6 +53,17 @@ function submissionFields(markdown) {
   return new Map(table.rows.map(row => [row['字段'], row['拟提交内容']]));
 }
 
+function publicationStatuses(markdown) {
+  const table = parseMarkdownTables(markdown).find(candidate => (
+    candidate.headers.length === 3 &&
+    candidate.headers.includes('事项') &&
+    candidate.headers.includes('状态') &&
+    candidate.headers.includes('说明')
+  ));
+  assert.ok(table, 'docs/publishing.md must contain an 事项/状态/说明 publication-status table');
+  return new Map(table.rows.map(row => [row['事项'], row['状态']]));
+}
+
 function jsonCodeBlocks(markdown) {
   return [...markdown.matchAll(/```json\s*([\s\S]*?)```/gi)].map(match => JSON.parse(match[1]));
 }
@@ -116,7 +127,7 @@ test('marketplace table retains every required submission field', () => {
   const fields = submissionFields(read('docs/publishing.md'));
   const requiredFields = [
     '插件名称', '插件 ID', '作者/发布者', '版本', '分类', '关键词/标签', '短描述',
-    '详细介绍', '使用说明', '更新日志', '开源协议', '隐私声明', '权限声明',
+    '详细介绍', '使用说明', '更新日志', '价格', '开源协议', '隐私声明', '权限声明',
     '数据声明', '广告声明', '平台', '最低 HBuilderX', '已验证环境', '源码地址',
     '问题反馈', '发行 ZIP', '截图建议', '审核备注', '个人/学生发布说明', '发布状态'
   ];
@@ -125,6 +136,22 @@ test('marketplace table retains every required submission field', () => {
     assert.ok(fields.has(field), `missing marketplace field: ${field}`);
     assert.ok(fields.get(field).trim(), `marketplace field must not be empty: ${field}`);
   }
+});
+
+test('marketplace pricing, licensing, portal checks, and unfinished work have structured statuses', () => {
+  const publishing = read('docs/publishing.md');
+  const fields = submissionFields(publishing);
+  const statuses = publicationStatuses(publishing);
+  const allowedStatuses = new Set(['已证实', '门户当天复核', '尚未完成']);
+
+  for (const status of statuses.values()) assert.ok(allowedStatuses.has(status), `unknown publication status: ${status}`);
+  assert.deepEqual(new Set(statuses.values()), allowedStatuses);
+  assert.equal(fields.get('价格'), '免费（平台产品类型规则）');
+  assert.equal(fields.get('开源协议'), manifest.license);
+  assert.equal(statuses.get('市场价格'), '已证实');
+  assert.equal(statuses.get('开源许可证'), '已证实');
+  assert.equal(statuses.get('个人身份与门户字段'), '门户当天复核');
+  assert.equal(statuses.get('插件 ID 唯一性'), '尚未完成');
 });
 
 test('manifest-backed marketplace values stay synchronized', () => {

@@ -135,4 +135,5 @@
 - 作者：`yanghui040701`
 - 源码：[yanghui040701/uniapp-auto-save-plugin](https://github.com/yanghui040701/uniapp-auto-save-plugin)
 - 问题反馈：[GitHub Issues](https://github.com/yanghui040701/uniapp-auto-save-plugin/issues)
-- 许可证：MIT，详见 `LICENSE`
+- 市场价格：按 DCloud 当前产品类型规则，HBuilderX 编辑器插件不能设置价格，因此本插件面向用户免费
+- 开源许可证：作者选择 MIT，详见 `LICENSE`；市场免费与开源许可是两个独立概念
