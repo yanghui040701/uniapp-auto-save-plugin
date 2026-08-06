@@ -1,0 +1,51 @@
+{
+  "id": "yanghui-auto-save",
+  "name": "HBuilderX Auto Save",
+  "displayName": "自动保存（防抖增强）",
+  "description": "停止输入后防抖保存，并协同原生失焦保存",
+  "version": "1.0.0",
+  "publisher": "yanghui040701",
+  "license": "MIT",
+  "engines": { "HBuilderX": "^3.2.3" },
+  "categories": ["Other"],
+  "keywords": ["自动保存", "HBuilderX", "防抖", "autosave"],
+  "main": "./extension",
+  "activationEvents": ["*"],
+  "contributes": {
+    "configuration": {
+      "title": "自动保存（防抖增强）",
+      "properties": {
+        "hbuilderx-auto-save.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "停止输入后自动保存当前文件"
+        },
+        "hbuilderx-auto-save.delay": {
+          "type": "number",
+          "default": 1000,
+          "description": "停止输入到自动保存的延迟（毫秒，允许 200–10000）"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "yanghui-auto-save.checkFocusSave",
+        "title": "自动保存：检查并开启 HBuilderX 原生失焦保存"
+      }
+    ]
+  },
+  "repository": "https://github.com/yanghui040701/uniapp-auto-save-plugin",
+  "bugs": "https://github.com/yanghui040701/uniapp-auto-save-plugin/issues",
+  "scripts": {
+    "test": "node --test",
+    "validate": "node scripts/validate-package.js",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1"
+  },
+  "dependencies": {},
+  "dcloudext": {
+    "category": ["HBuilderX", "HBuilderX"],
+    "contact": { "qq": "" },
+    "declaration": { "ads": "无", "data": "无", "permissions": "无" },
+    "npmurl": ""
+  }
+}
