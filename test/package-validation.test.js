@@ -319,6 +319,50 @@ test('every allowlist preflight failure preserves old staging and ZIP artifacts'
     ['allowlist query emits malformed JSON', "process.stdout.write('not json')"],
     ['allowlist query emits the wrong count', "process.stdout.write('[\"package.json\"]')"],
     [
+      'allowlist query wraps the canonical list in a nested array',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([CANONICAL_FILES]))})`
+    ],
+    [
+      'allowlist query contains one mixed nested array item',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([
+        ...CANONICAL_FILES.slice(0, 8),
+        [CANONICAL_FILES[8]]
+      ]))})`
+    ],
+    [
+      'allowlist query returns an object instead of an array',
+      `process.stdout.write(${JSON.stringify(JSON.stringify({ files: CANONICAL_FILES }))})`
+    ],
+    ['allowlist query returns null', "process.stdout.write('null')"],
+    [
+      'allowlist query contains an object item',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([
+        ...CANONICAL_FILES.slice(0, 8),
+        { path: CANONICAL_FILES[8] }
+      ]))})`
+    ],
+    [
+      'allowlist query contains a null item',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([
+        ...CANONICAL_FILES.slice(0, 8),
+        null
+      ]))})`
+    ],
+    [
+      'allowlist query contains a number item',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([
+        ...CANONICAL_FILES.slice(0, 8),
+        7
+      ]))})`
+    ],
+    [
+      'allowlist query contains a boolean item',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([
+        ...CANONICAL_FILES.slice(0, 8),
+        true
+      ]))})`
+    ],
+    [
       'allowlist query emits a traversal path',
       `process.stdout.write(${JSON.stringify(JSON.stringify([
         ...CANONICAL_FILES.slice(0, 8),

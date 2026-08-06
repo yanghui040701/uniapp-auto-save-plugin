@@ -82,16 +82,26 @@ try {
     if (-not (Test-Path -LiteralPath $validatorPath -PathType Leaf)) {
         throw 'PACKAGE_VALIDATION_FAILED: validator is not an ordinary file'
     }
-    $allowlistJson = & node.exe $validatorPath '--files-json'
+    $allowlistOutput = & node.exe $validatorPath '--files-json'
     if ($LASTEXITCODE -ne 0) {
         throw "PACKAGE_VALIDATION_FAILED: validator allowlist query exited with code $LASTEXITCODE"
     }
     try {
-        $parsedAllowlist = $allowlistJson | ConvertFrom-Json
-        $files = @($parsedAllowlist | ForEach-Object { $_ })
+        Add-Type -AssemblyName System.Web.Extensions
+        $allowlistJson = [string]::Join([System.Environment]::NewLine, [string[]]@($allowlistOutput))
+        $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+        $parsedAllowlist = $serializer.DeserializeObject($allowlistJson)
     } catch {
         throw "PACKAGE_VALIDATION_FAILED: validator returned invalid allowlist JSON"
     }
+
+    # Preserve JSON structure until the top-level shape is proven. In particular,
+    # never send DeserializeObject output through a PowerShell pipeline: Windows
+    # PowerShell 5.1 recursively enumerates nested arrays there.
+    if ($null -eq $parsedAllowlist -or $parsedAllowlist.GetType() -ne [System.Object[]] -or $parsedAllowlist.Rank -ne 1) {
+        throw "PACKAGE_VALIDATION_FAILED: validator allowlist must be a one-dimensional JSON array"
+    }
+    $files = $parsedAllowlist
     if ($files.Count -ne 9) {
         throw "PACKAGE_VALIDATION_FAILED: validator returned $($files.Count) files instead of 9"
     }
