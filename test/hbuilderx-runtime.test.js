@@ -345,8 +345,18 @@ test('save errors replace suspicious reasons with one fixed explanation', async 
     'see(mailto:user@example.com)',
     'data:text/plain,secret',
     'C:index.vue',
+    'C%3A%5Cprivate%5Cproject%5Cindex.vue',
+    '%2Fprivate%2Fproject%2Findex.vue',
+    'file%3A%2F%2F%2FC%3A%2Fprivate%2Fproject%2Findex.vue',
+    'C%253A%255Cprivate%255Cproject%255Cindex.vue',
+    'c%3a%5cprivate%5cproject%5cindex.vue',
+    'disk is 100% full',
     'secret\nnext line',
     'secret\ttab',
+    'secret\u0085next line',
+    'secret\u009Fcontrol',
+    'secret\u2028line separator',
+    'secret\u2029paragraph separator',
     `too long ${'x'.repeat(200)}`,
     ''
   ];
@@ -419,6 +429,26 @@ test('save error preserves special characters in raw filesystem basenames', asyn
   }
 });
 
+test('raw filenames fail closed on Unicode controls and separators', async () => {
+  const unsafeNames = [
+    'foo\u0085bar.vue',
+    'foo\u009Fbar.vue',
+    'foo\u2028bar.vue',
+    'foo\u2029bar.vue'
+  ];
+
+  for (const fileName of unsafeNames) {
+    const hx = fakeHx();
+    await createHBuilderXRuntime(hx).reportSaveError(
+      new Error('denied'),
+      { fileName: `C:\\project\\${fileName}` }
+    );
+    const options = hx.calls.find(call => call[0] === 'messageBox')[1];
+    assert.equal(options.text, '自动保存 当前文件 失败：denied');
+    assert.doesNotMatch(options.text, /[\u007F-\u009F\u2028\u2029]/);
+  }
+});
+
 test('URI filenames decode before applying Windows and POSIX basename rules', async () => {
   const scenarios = [
     {
@@ -452,6 +482,10 @@ test('URI filenames fail closed on malformed encoding and decoded control charac
     'file:///safe/foo%0Abar.vue',
     'file:///safe/foo%00bar.vue',
     'file:///safe/foo%7Fbar.vue',
+    'file:///safe/foo%C2%85bar.vue',
+    'file:///safe/foo%C2%9Fbar.vue',
+    'file:///safe/foo%E2%80%A8bar.vue',
+    'file:///safe/foo%E2%80%A9bar.vue',
     'file:///safe/foo%ZZbar.vue'
   ];
 
@@ -463,7 +497,7 @@ test('URI filenames fail closed on malformed encoding and decoded control charac
     );
     const options = hx.calls.find(call => call[0] === 'messageBox')[1];
     assert.equal(options.text, '自动保存 当前文件 失败：denied');
-    assert.doesNotMatch(options.text, /[\u0000-\u001F\u007F%]/);
+    assert.doesNotMatch(options.text, /[\u0000-\u001F\u007F-\u009F\u2028\u2029%]/);
   }
 });
 
