@@ -1,0 +1,210 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {
+  normalizeDelay,
+  documentKey,
+  isSaveCandidate,
+  createAutoSaveController
+} = require('../lib/auto-save-controller');
+
+function createClock() {
+  let nextId = 1;
+  const tasks = new Map();
+  return {
+    setTimeout(fn, delay) {
+      const id = nextId++;
+      tasks.set(id, { fn, delay });
+      return id;
+    },
+    clearTimeout(id) { tasks.delete(id); },
+    pending() { return [...tasks.values()]; },
+    async runLatest() {
+      const latest = [...tasks.entries()].at(-1);
+      if (!latest) return;
+      tasks.delete(latest[0]);
+      await latest[1].fn();
+    }
+  };
+}
+
+function document(name, overrides = {}) {
+  return {
+    fileName: `C:\\project\\${name}`,
+    uri: { scheme: 'file', fsPath: `C:\\project\\${name}` },
+    isUntitled: false,
+    isDirty: true,
+    ...overrides
+  };
+}
+
+test('normalizes delay to the safe range', () => {
+  assert.equal(normalizeDelay(199), 200);
+  assert.equal(normalizeDelay(1000), 1000);
+  assert.equal(normalizeDelay(10001), 10000);
+  assert.equal(normalizeDelay('bad'), 1000);
+});
+
+test('uses a stable filesystem path as the document identity', () => {
+  assert.equal(documentKey(document('index.vue')), 'C:\\project\\index.vue');
+  assert.equal(documentKey({ fileName: 'fallback.vue' }), 'fallback.vue');
+  assert.equal(documentKey(), '');
+});
+
+test('filters untitled, non-file, clean, and read-only documents', () => {
+  assert.equal(isSaveCandidate(document('a.vue', { isUntitled: true }), false), false);
+  assert.equal(isSaveCandidate(document('a.vue', { uri: { scheme: 'http' } }), false), false);
+  assert.equal(isSaveCandidate(document('a.vue', { isDirty: false }), false), false);
+  assert.equal(isSaveCandidate(document('a.vue'), true), false);
+  assert.equal(isSaveCandidate(document('a.vue'), false), true);
+});
+
+test('debounces repeated edits into one save', async () => {
+  const clock = createClock();
+  const active = document('index.vue');
+  let saves = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => { saves += 1; },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+  controller.handleDocumentChange({ document: active });
+  controller.handleDocumentChange({ document: active });
+  controller.handleDocumentChange({ document: active });
+  assert.equal(clock.pending().length, 1);
+  assert.equal(clock.pending()[0].delay, 1000);
+  await clock.runLatest();
+  assert.equal(saves, 1);
+});
+
+test('an ineligible change cancels older pending work', () => {
+  const clock = createClock();
+  const active = document('index.vue');
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => {},
+    reportSaveError: () => {}
+  });
+  controller.handleDocumentChange({ document: active });
+  controller.handleDocumentChange({ document: document('index.vue', { isDirty: false }) });
+  assert.equal(clock.pending().length, 0);
+});
+
+test('does not save a new active document with an old timer', async () => {
+  const clock = createClock();
+  const changed = document('old.vue');
+  const active = document('new.vue');
+  let saves = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => { saves += 1; },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+  controller.handleDocumentChange({ document: changed });
+  await clock.runLatest();
+  assert.equal(saves, 0);
+});
+
+test('rechecks active document eligibility when the timer fires', async () => {
+  const clock = createClock();
+  const active = document('index.vue');
+  let saves = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: true }),
+    saveActiveDocument: async () => { saves += 1; },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+  controller.handleDocumentChange({ document: active });
+  await clock.runLatest();
+  assert.equal(saves, 0);
+});
+
+test('disabled settings do not schedule and disabling cancels pending work', () => {
+  const clock = createClock();
+  const settings = { enabled: false, delay: 1000 };
+  const active = document('index.vue');
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => settings,
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => {},
+    reportSaveError: () => {}
+  });
+  controller.handleDocumentChange({ document: active });
+  assert.equal(clock.pending().length, 0);
+  settings.enabled = true;
+  controller.handleDocumentChange({ document: active });
+  assert.equal(clock.pending().length, 1);
+  settings.enabled = false;
+  controller.handleConfigurationChange();
+  assert.equal(clock.pending().length, 0);
+});
+
+test('configuration change reschedules pending work with normalized delay', () => {
+  const clock = createClock();
+  const settings = { enabled: true, delay: 1000 };
+  const active = document('index.vue');
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => settings,
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => {},
+    reportSaveError: () => {}
+  });
+  controller.handleDocumentChange({ document: active });
+  settings.delay = 50;
+  controller.handleConfigurationChange();
+  assert.equal(clock.pending().length, 1);
+  assert.equal(clock.pending()[0].delay, 200);
+});
+
+test('dispose cancels pending work and prevents later scheduling', () => {
+  const clock = createClock();
+  const active = document('index.vue');
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => {},
+    reportSaveError: () => {}
+  });
+  controller.handleDocumentChange({ document: active });
+  controller.dispose();
+  controller.handleDocumentChange({ document: active });
+  assert.equal(clock.pending().length, 0);
+});
+
+test('reports one failed save and waits for a new edit before retrying', async () => {
+  const clock = createClock();
+  const active = document('index.vue');
+  let reports = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => { throw new Error('denied'); },
+    reportSaveError: () => { reports += 1; }
+  });
+  controller.handleDocumentChange({ document: active });
+  await clock.runLatest();
+  await clock.runLatest();
+  assert.equal(reports, 1);
+  controller.handleDocumentChange({ document: active });
+  await clock.runLatest();
+  assert.equal(reports, 2);
+});
