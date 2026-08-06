@@ -33,6 +33,14 @@ function Assert-SafeChildPath {
         }
     }
 
+    if (Test-Path -LiteralPath $fullCandidate) {
+        $realCandidate = Get-NormalizedFullPath -LiteralPath (Resolve-Path -LiteralPath $fullCandidate).ProviderPath
+        if (-not $realCandidate.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "PACKAGE_SAFETY_ERROR: $Label resolves outside the repository root: $realCandidate"
+        }
+        $fullCandidate = $realCandidate
+    }
+
     return $fullCandidate
 }
 
@@ -70,22 +78,10 @@ try {
     $stagingDir = Assert-SafeChildPath -Root $root -Candidate (Join-Path $distDir 'yanghui-auto-save') -Label 'staging'
     $zipPath = Assert-SafeChildPath -Root $root -Candidate (Join-Path $distDir 'yanghui-auto-save.zip') -Label 'zip'
 
-    if (-not (Test-Path -LiteralPath $distDir)) {
-        New-Item -ItemType Directory -Path $distDir | Out-Null
-    }
-    $distDir = Assert-SafeChildPath -Root $root -Candidate $distDir -Label 'dist'
-    $stagingDir = Assert-SafeChildPath -Root $root -Candidate $stagingDir -Label 'staging'
-    $zipPath = Assert-SafeChildPath -Root $root -Candidate $zipPath -Label 'zip'
-
-    if (Test-Path -LiteralPath $stagingDir) {
-        Remove-Item -LiteralPath $stagingDir -Recurse -Force
-    }
-    if (Test-Path -LiteralPath $zipPath) {
-        Remove-Item -LiteralPath $zipPath -Force
-    }
-    New-Item -ItemType Directory -Path $stagingDir | Out-Null
-
     $validatorPath = Assert-SafeChildPath -Root $root -Candidate (Join-Path $root 'scripts\validate-package.js') -Label 'validator'
+    if (-not (Test-Path -LiteralPath $validatorPath -PathType Leaf)) {
+        throw 'PACKAGE_VALIDATION_FAILED: validator is not an ordinary file'
+    }
     $allowlistJson = & node.exe $validatorPath '--files-json'
     if ($LASTEXITCODE -ne 0) {
         throw "PACKAGE_VALIDATION_FAILED: validator allowlist query exited with code $LASTEXITCODE"
@@ -100,17 +96,79 @@ try {
         throw "PACKAGE_VALIDATION_FAILED: validator returned $($files.Count) files instead of 9"
     }
 
+    $expectedAllowlist = @(
+        'CHANGELOG.md',
+        'LICENSE',
+        'README.md',
+        'extension.js',
+        'lib/auto-save-controller.js',
+        'lib/focus-save-coordinator.js',
+        'lib/hbuilderx-runtime.js',
+        'lib/prompt-state.js',
+        'package.json'
+    )
+    $copyPlan = @()
+    $normalizedFiles = @()
     foreach ($file in $files) {
-        if ($file -isnot [string] -or [string]::IsNullOrWhiteSpace($file) -or [System.IO.Path]::IsPathRooted($file)) {
+        if (
+            $file -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($file) -or
+            [System.IO.Path]::IsPathRooted($file) -or
+            $file.Contains('\') -or
+            $file.Contains(':')
+        ) {
             throw "PACKAGE_VALIDATION_FAILED: validator returned an unsafe allowlist entry"
         }
+        $segments = @($file.Split('/'))
+        if ($segments.Count -eq 0 -or @($segments | Where-Object { $_ -eq '' -or $_ -eq '.' -or $_ -eq '..' }).Count -ne 0) {
+            throw "PACKAGE_VALIDATION_FAILED: validator returned an unsafe allowlist entry"
+        }
+        if ($normalizedFiles -contains $file) {
+            throw "PACKAGE_VALIDATION_FAILED: validator returned a duplicate allowlist entry"
+        }
+        $normalizedFiles += $file
+
         $source = Assert-SafeChildPath -Root $root -Candidate (Join-Path $root $file) -Label "source $file"
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw "PACKAGE_VALIDATION_FAILED: allowlisted source is not an ordinary file: $file"
+        }
+        $sourceItem = Get-Item -LiteralPath $source -Force
+        if ($sourceItem.PSIsContainer -or ($sourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "PACKAGE_VALIDATION_FAILED: allowlisted source is not an ordinary file: $file"
+        }
         $destination = Assert-SafeChildPath -Root $root -Candidate (Join-Path $stagingDir $file) -Label "destination $file"
-        $destinationParent = Split-Path -Parent $destination
+        $copyPlan += [PSCustomObject]@{
+            File = $file
+            Source = $source
+            Destination = $destination
+        }
+    }
+
+    $allowlistDifference = @(Compare-Object -ReferenceObject ($expectedAllowlist | Sort-Object) -DifferenceObject ($normalizedFiles | Sort-Object))
+    if ($allowlistDifference.Count -ne 0) {
+        throw 'PACKAGE_VALIDATION_FAILED: validator returned unexpected allowlist values'
+    }
+
+    # Destructive cleanup begins only after every test, validation, path, allowlist,
+    # and source-file preflight above has succeeded. The cached copy plan is the
+    # only allowlist data consumed after this point.
+    if (Test-Path -LiteralPath $stagingDir) {
+        Remove-Item -LiteralPath $stagingDir -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $zipPath) {
+        Remove-Item -LiteralPath $zipPath -Force
+    }
+    if (-not (Test-Path -LiteralPath $distDir)) {
+        New-Item -ItemType Directory -Path $distDir | Out-Null
+    }
+    New-Item -ItemType Directory -Path $stagingDir | Out-Null
+
+    foreach ($entry in $copyPlan) {
+        $destinationParent = Split-Path -Parent $entry.Destination
         if (-not (Test-Path -LiteralPath $destinationParent)) {
             New-Item -ItemType Directory -Path $destinationParent | Out-Null
         }
-        Copy-Item -LiteralPath $source -Destination $destination
+        Copy-Item -LiteralPath $entry.Source -Destination $entry.Destination
     }
 
     Compress-Archive -LiteralPath $stagingDir -DestinationPath $zipPath -CompressionLevel Optimal
@@ -121,7 +179,7 @@ try {
     try {
         $normalizedEntries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
         $actualFiles = @($normalizedEntries | Where-Object { -not $_.EndsWith('/') } | Sort-Object)
-        $expectedFiles = @($files | ForEach-Object { "yanghui-auto-save/$($_.Replace('\', '/'))" } | Sort-Object)
+        $expectedFiles = @($copyPlan | ForEach-Object { "yanghui-auto-save/$($_.File)" } | Sort-Object)
         $difference = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles)
         if ($actualFiles.Count -ne 9 -or $difference.Count -ne 0) {
             throw 'PACKAGE_ARCHIVE_INVALID: ZIP file entries do not match the validator allowlist'

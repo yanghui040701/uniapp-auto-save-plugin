@@ -95,6 +95,33 @@ function readZipEntries(zipPath) {
   return result.stdout.split(/\r?\n/).filter(Boolean);
 }
 
+function seedOldArtifacts(root) {
+  const stagingMarker = path.join(root, 'dist', 'yanghui-auto-save', 'keep.txt');
+  fs.mkdirSync(path.dirname(stagingMarker), { recursive: true });
+  fs.writeFileSync(stagingMarker, 'staging');
+  const zipMarker = path.join(root, 'dist', 'yanghui-auto-save.zip');
+  fs.writeFileSync(zipMarker, 'zip');
+  return { stagingMarker, zipMarker };
+}
+
+function assertOldArtifactsUnchanged(markers) {
+  assert.equal(fs.readFileSync(markers.stagingMarker, 'utf8'), 'staging');
+  assert.equal(fs.readFileSync(markers.zipMarker, 'utf8'), 'zip');
+}
+
+function writeConditionalValidator(root, filesJsonBranch) {
+  fs.writeFileSync(
+    path.join(root, 'scripts', 'validate-package.js'),
+    [
+      "if (process.argv.includes('--files-json')) {",
+      `  ${filesJsonBranch}`,
+      '  return;',
+      '}',
+      "console.log('validation passed');"
+    ].join('\n')
+  );
+}
+
 test('repository contains every required distribution file', () => {
   const result = validateDistribution(path.resolve(__dirname, '..'));
 
@@ -181,6 +208,31 @@ test('required distribution paths must be ordinary files', (t) => {
   assert.match(result.errors.join('\n'), /不是普通文件: extension\.js/);
 });
 
+test('distribution paths reject lib junctions before following their files', async (t) => {
+  for (const targetKind of ['outside root', 'inside root']) {
+    await t.test(targetKind, (t) => {
+      const root = createDistributionFixture(t);
+      const target = targetKind === 'outside root'
+        ? fs.mkdtempSync(path.join(os.tmpdir(), 'yanghui-lib-junction-'))
+        : path.join(root, 'internal-lib');
+      if (targetKind === 'outside root') {
+        t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+      } else {
+        fs.mkdirSync(target);
+      }
+      for (const file of EXPECTED_FILES.filter((file) => file.startsWith('lib/'))) {
+        fs.writeFileSync(path.join(target, path.basename(file)), `junction fixture for ${file}\n`);
+      }
+      fs.rmSync(path.join(root, 'lib'), { recursive: true });
+      fs.symlinkSync(target, path.join(root, 'lib'), 'junction');
+
+      const result = validateDistribution(root);
+
+      assert.match(result.errors.join('\n'), /重解析点|仓库外/);
+    });
+  }
+});
+
 test('invalid validation roots return errors instead of escaping exceptions', () => {
   for (const root of [null, {}, Symbol('hostile-root')]) {
     const result = validateDistribution(root);
@@ -239,16 +291,44 @@ test('package script rejects a dist junction before deleting outside files', (t)
 
 test('package script stops before cleanup when npm test fails', (t) => {
   const root = createPackagingFixture(t, 'node -e "process.exit(23)"');
-  const stagingMarker = path.join(root, 'dist', 'yanghui-auto-save', 'keep.txt');
-  fs.mkdirSync(path.dirname(stagingMarker), { recursive: true });
-  fs.writeFileSync(stagingMarker, 'staging');
-  const zipMarker = path.join(root, 'dist', 'yanghui-auto-save.zip');
-  fs.writeFileSync(zipMarker, 'zip');
+  const markers = seedOldArtifacts(root);
 
   const result = runPackageScript(root);
 
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /PACKAGE_TEST_FAILED/);
-  assert.equal(fs.readFileSync(stagingMarker, 'utf8'), 'staging');
-  assert.equal(fs.readFileSync(zipMarker, 'utf8'), 'zip');
+  assertOldArtifactsUnchanged(markers);
+});
+
+test('every allowlist preflight failure preserves old staging and ZIP artifacts', async (t) => {
+  const allowlistJson = JSON.stringify(EXPECTED_FILES);
+  const cases = [
+    ['allowlist query exits nonzero', 'process.exit(17)'],
+    ['allowlist query emits malformed JSON', "process.stdout.write('not json')"],
+    ['allowlist query emits the wrong count', "process.stdout.write('[\"package.json\"]')"],
+    [
+      'allowlist query emits a traversal path',
+      `process.stdout.write(${JSON.stringify(JSON.stringify([
+        ...EXPECTED_FILES.slice(0, 8),
+        '../outside.txt'
+      ]))})`
+    ],
+    ['allowlisted source is missing', `process.stdout.write(${JSON.stringify(allowlistJson)})`]
+  ];
+
+  for (const [name, filesJsonBranch] of cases) {
+    await t.test(name, (t) => {
+      const root = createPackagingFixture(t);
+      writeConditionalValidator(root, filesJsonBranch);
+      if (name === 'allowlisted source is missing') {
+        fs.rmSync(path.join(root, 'extension.js'));
+      }
+      const markers = seedOldArtifacts(root);
+
+      const result = runPackageScript(root);
+
+      assert.notEqual(result.status, 0);
+      assertOldArtifactsUnchanged(markers);
+    });
+  }
 });

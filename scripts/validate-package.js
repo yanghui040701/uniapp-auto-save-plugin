@@ -19,6 +19,7 @@ function validateDistribution(root) {
   const files = [...DISTRIBUTION_FILES];
   const errors = [];
   let resolvedRoot;
+  let realRoot;
 
   try {
     if (typeof root !== 'string' || root.length === 0) {
@@ -29,6 +30,7 @@ function validateDistribution(root) {
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
       throw new TypeError('root must be an ordinary directory');
     }
+    realRoot = fs.realpathSync.native(resolvedRoot);
   } catch {
     errors.push('发布根目录无效');
     return { files, errors };
@@ -36,11 +38,49 @@ function validateDistribution(root) {
 
   let packageJsonIsFile = false;
   for (const file of files) {
+    const segments = file.split('/');
+    let currentPath = resolvedRoot;
+    let fileIsSafe = true;
+
     try {
-      const stat = fs.lstatSync(path.join(resolvedRoot, file));
-      if (!stat.isFile() || stat.isSymbolicLink()) {
-        errors.push(`发布路径不是普通文件: ${file}`);
-      } else if (file === 'package.json') {
+      for (let index = 0; index < segments.length; index += 1) {
+        currentPath = path.join(currentPath, segments[index]);
+        const stat = fs.lstatSync(currentPath);
+        if (stat.isSymbolicLink()) {
+          errors.push(`发布路径包含符号链接或重解析点: ${file}`);
+          fileIsSafe = false;
+          break;
+        }
+
+        const isFinalSegment = index === segments.length - 1;
+        if (!isFinalSegment && !stat.isDirectory()) {
+          errors.push(`发布路径中间段不是目录: ${file}`);
+          fileIsSafe = false;
+          break;
+        }
+        if (isFinalSegment && !stat.isFile()) {
+          errors.push(`发布路径不是普通文件: ${file}`);
+          fileIsSafe = false;
+        }
+      }
+
+      if (!fileIsSafe) continue;
+
+      const realFile = fs.realpathSync.native(currentPath);
+      const comparableRoot = process.platform === 'win32' ? realRoot.toLowerCase() : realRoot;
+      const comparableFile = process.platform === 'win32' ? realFile.toLowerCase() : realFile;
+      const relative = path.relative(comparableRoot, comparableFile);
+      if (
+        relative === '' ||
+        relative === '..' ||
+        relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative)
+      ) {
+        errors.push(`发布文件真实路径位于仓库外: ${file}`);
+        continue;
+      }
+
+      if (file === 'package.json') {
         packageJsonIsFile = true;
       }
     } catch (error) {
