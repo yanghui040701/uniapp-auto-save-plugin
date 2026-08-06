@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const Module = require('node:module');
 const { spawnSync } = require('node:child_process');
+const { createFocusSaveCoordinator } = require('../lib/focus-save-coordinator');
 const {
   activate,
   startExtension,
@@ -203,6 +204,196 @@ test('activateWithRuntime replaces the previous instance and deactivate is idemp
   deactivate();
   deactivate();
   assert.equal(secondCleared, 1);
+});
+
+test('superseded listeners are inert without disposing HBuilderX subscriptions', async () => {
+  const first = createRuntimeFixture();
+  const second = createRuntimeFixture();
+  const firstChecks = [];
+  const firstReports = [];
+  first.runtime.reportInternalError = error => { firstReports.push(error.message); };
+
+  await activateWithRuntime(first.context, first.runtime, {
+    focusCoordinator: {
+      ensure(options) { firstChecks.push(options); }
+    }
+  });
+  const oldListeners = { ...first.listeners };
+  await activateWithRuntime(second.context, second.runtime, {
+    focusCoordinator: { ensure: async () => {} }
+  });
+
+  first.runtime.getSettings = () => { throw new Error('old runtime used'); };
+  await oldListeners.command();
+  await oldListeners.change({ document: first.active });
+  await oldListeners.config({});
+
+  assert.deepEqual(firstChecks, [{ force: false }]);
+  assert.deepEqual(firstReports, []);
+  assert.equal(first.subscriptionDisposals(), 0);
+});
+
+test('deactivated listeners are inert and do not report old runtime failures', async () => {
+  const fixture = createRuntimeFixture();
+  const checks = [];
+  const reports = [];
+  fixture.runtime.reportInternalError = error => { reports.push(error.message); };
+
+  await activateWithRuntime(fixture.context, fixture.runtime, {
+    focusCoordinator: {
+      ensure(options) { checks.push(options); }
+    }
+  });
+  const oldListeners = { ...fixture.listeners };
+  deactivate();
+  fixture.runtime.getSettings = () => { throw new Error('deactivated runtime used'); };
+
+  await oldListeners.command();
+  await oldListeners.change({ document: fixture.active });
+  await oldListeners.config({});
+
+  assert.deepEqual(checks, [{ force: false }]);
+  assert.deepEqual(reports, []);
+  assert.equal(fixture.subscriptionDisposals(), 0);
+});
+
+test('disposing before the automatic microtask settles ready without starting a check', async () => {
+  const fixture = createRuntimeFixture();
+  const checks = [];
+  const instance = startExtension(fixture.context, fixture.runtime, {
+    focusCoordinator: {
+      ensure(options) { checks.push(options); }
+    }
+  });
+
+  instance.dispose();
+
+  await assert.doesNotReject(instance.ready);
+  assert.deepEqual(checks, []);
+});
+
+test('back-to-back activations allow only the current real coordinator to prompt', async () => {
+  const first = createRuntimeFixture();
+  const second = createRuntimeFixture();
+  let handled = false;
+  let prompts = 0;
+  const state = {
+    wasHandled: () => handled,
+    markHandled() {
+      handled = true;
+      return true;
+    }
+  };
+  function coordinator() {
+    return createFocusSaveCoordinator({
+      state,
+      runtime: {
+        isNativeFocusSaveEnabled: () => false,
+        promptNativeFocusSave() {
+          prompts += 1;
+          return Promise.resolve('decline');
+        },
+        enableNativeFocusSave: async () => {},
+        showNativeFocusSaveEnabled: async () => {},
+        showNativeFocusSaveManualFallback: async () => {}
+      }
+    });
+  }
+
+  const firstReady = activateWithRuntime(first.context, first.runtime, {
+    focusCoordinator: coordinator()
+  });
+  const secondReady = activateWithRuntime(second.context, second.runtime, {
+    focusCoordinator: coordinator()
+  });
+
+  await Promise.all([firstReady, secondReady]);
+  assert.equal(prompts, 1);
+  assert.equal(handled, true);
+  assert.equal(first.subscriptionDisposals(), 0);
+});
+
+test('a superseded ready rejection is strict-safe and cannot affect the current instance', () => {
+  const script = `
+    const assert = require('node:assert/strict');
+    const { activateWithRuntime, deactivate } = require('./extension');
+    function fixture() {
+      const listeners = {};
+      const reports = [];
+      const runtime = {
+        getSettings: () => ({ enabled: true, delay: 1000 }),
+        getActiveSnapshot: async () => ({ document: null, readOnly: false }),
+        saveActiveDocument: async () => {},
+        reportSaveError: () => {},
+        reportInternalError(error) { reports.push(error.message); },
+        onDocumentChange(listener) {
+          listeners.change = listener;
+          return { dispose() {} };
+        },
+        onConfigurationChange(listener) {
+          listeners.config = listener;
+          return { dispose() {} };
+        },
+        registerCommand(_id, listener) {
+          listeners.command = listener;
+          return { dispose() {} };
+        }
+      };
+      return { context: { subscriptions: [] }, listeners, reports, runtime };
+    }
+    let rejectFirst;
+    const firstFlight = new Promise((_resolve, reject) => { rejectFirst = reject; });
+    const first = fixture();
+    const second = fixture();
+    const firstChecks = [];
+    const secondChecks = [];
+    const watchdog = setTimeout(() => {
+      console.error('lifecycle readiness did not settle');
+      process.exit(1);
+    }, 2000);
+    const firstReady = activateWithRuntime(first.context, first.runtime, {
+      focusCoordinator: {
+        ensure(options) {
+          firstChecks.push(options);
+          return firstFlight;
+        }
+      }
+    });
+    void firstReady;
+
+    (async () => {
+      await Promise.resolve();
+      const secondReady = activateWithRuntime(second.context, second.runtime, {
+        focusCoordinator: {
+          ensure(options) { secondChecks.push(options); }
+        }
+      });
+      await secondReady;
+      rejectFirst(new Error('old ready failed'));
+      await new Promise(resolve => setImmediate(resolve));
+
+      assert.deepEqual(firstChecks, [{ force: false }]);
+      assert.deepEqual(first.reports, []);
+      assert.deepEqual(secondChecks, [{ force: false }]);
+
+      deactivate();
+      second.listeners.command();
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(secondChecks, [{ force: false }]);
+      clearTimeout(watchdog);
+    })().catch(error => {
+      clearTimeout(watchdog);
+      console.error(error);
+      process.exitCode = 1;
+    });
+  `;
+  const result = spawnSync(
+    process.execPath,
+    ['--unhandled-rejections=strict', '-e', script],
+    { cwd: path.resolve(__dirname, '..'), encoding: 'utf8' }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('first-run failures from sync, Promise, and custom thenable inputs never reject ready', async () => {

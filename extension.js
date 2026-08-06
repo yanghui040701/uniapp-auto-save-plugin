@@ -7,7 +7,8 @@ const CHECK_FOCUS_SAVE_COMMAND = 'yanghui-auto-save.checkFocusSave';
 
 let activeInstance;
 
-function reportInternalErrorSafely(runtime, error) {
+function reportInternalErrorSafely(runtime, error, isActive = () => true) {
+  if (!isActive()) return Promise.resolve();
   try {
     return Promise.resolve(runtime.reportInternalError(error)).catch(() => undefined);
   } catch {
@@ -15,21 +16,36 @@ function reportInternalErrorSafely(runtime, error) {
   }
 }
 
-function invokeSafely(runtime, operation) {
+function invokeSafely(runtime, operation, isActive = () => true) {
+  if (!isActive()) return Promise.resolve();
   let result;
   try {
     result = operation();
   } catch (error) {
-    return reportInternalErrorSafely(runtime, error);
+    return reportInternalErrorSafely(runtime, error, isActive);
   }
 
-  return Promise.resolve(result).catch(error => reportInternalErrorSafely(runtime, error));
+  return Promise.resolve(result).catch(error => (
+    reportInternalErrorSafely(runtime, error, isActive)
+  ));
+}
+
+function settleSilently(operation) {
+  try {
+    return Promise.resolve(operation()).catch(() => undefined);
+  } catch {
+    return Promise.resolve();
+  }
 }
 
 function startExtension(context, runtime, options = {}) {
   const setTimer = options.setTimeout || globalThis.setTimeout;
   const clearTimer = options.clearTimeout || globalThis.clearTimeout;
   const focusCoordinator = options.focusCoordinator;
+  let disposed = false;
+  let activeGeneration = 1;
+  const instanceGeneration = activeGeneration;
+  const isActive = () => !disposed && activeGeneration === instanceGeneration;
   const controller = createAutoSaveController({
     setTimeout: setTimer,
     clearTimeout: clearTimer,
@@ -40,13 +56,13 @@ function startExtension(context, runtime, options = {}) {
   });
 
   const documentSubscription = runtime.onDocumentChange(event => (
-    invokeSafely(runtime, () => controller.handleDocumentChange(event))
+    invokeSafely(runtime, () => controller.handleDocumentChange(event), isActive)
   ));
   const configurationSubscription = runtime.onConfigurationChange(event => (
-    invokeSafely(runtime, () => controller.handleConfigurationChange(event))
+    invokeSafely(runtime, () => controller.handleConfigurationChange(event), isActive)
   ));
   const commandSubscription = runtime.registerCommand(CHECK_FOCUS_SAVE_COMMAND, () => (
-    invokeSafely(runtime, () => focusCoordinator.ensure({ force: true }))
+    invokeSafely(runtime, () => focusCoordinator.ensure({ force: true }), isActive)
   ));
   context.subscriptions.push(
     documentSubscription,
@@ -54,15 +70,17 @@ function startExtension(context, runtime, options = {}) {
     commandSubscription
   );
 
-  const ready = invokeSafely(runtime, () => focusCoordinator.ensure({ force: false }));
-  let disposed = false;
+  const ready = Promise.resolve().then(() => (
+    invokeSafely(runtime, () => focusCoordinator.ensure({ force: false }), isActive)
+  ));
 
   return {
     ready,
     dispose() {
       if (disposed) return;
       disposed = true;
-      void invokeSafely(runtime, () => controller.dispose());
+      activeGeneration += 1;
+      void settleSilently(() => controller.dispose());
     }
   };
 }
