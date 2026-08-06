@@ -309,9 +309,60 @@ test('save error displays basename and does not expose the full path', async () 
   );
   const options = hx.calls.find(call => call[0] === 'messageBox')[1];
   assert.match(options.text, /index\.vue/);
-  assert.match(options.text, /文件权限或磁盘状态/);
-  assert.doesNotMatch(options.text, /denied/);
+  assert.match(options.text, /denied/);
   assert.doesNotMatch(options.text, /private|project/);
+});
+
+test('save errors preserve short ordinary reasons', async () => {
+  const reasons = [
+    'denied',
+    'EACCES: permission denied',
+    '权限不足',
+    '  temporarily unavailable  '
+  ];
+
+  for (const reason of reasons) {
+    const hx = fakeHx();
+    await createHBuilderXRuntime(hx).reportSaveError(
+      new Error(reason),
+      { fileName: 'C:\\project\\index.vue' }
+    );
+    const options = hx.calls.find(call => call[0] === 'messageBox')[1];
+    assert.equal(
+      options.text,
+      `自动保存 index.vue 失败：${reason.trim()}`
+    );
+  }
+});
+
+test('save errors replace suspicious reasons with one fixed explanation', async () => {
+  const reasons = [
+    'Unable to write C:\\private\\project\\index.vue',
+    'Unable to write c:/PRIVATE/PROJECT/INDEX.VUE',
+    'Unable to write /private/project/index.vue',
+    'Unable to write file:///C:/private/project/index.vue',
+    'see mailto:user@example.com',
+    'see(mailto:user@example.com)',
+    'data:text/plain,secret',
+    'C:index.vue',
+    'secret\nnext line',
+    'secret\ttab',
+    `too long ${'x'.repeat(200)}`,
+    ''
+  ];
+
+  for (const reason of reasons) {
+    const hx = fakeHx();
+    await createHBuilderXRuntime(hx).reportSaveError(
+      new Error(reason),
+      { fileName: 'C:\\project\\index.vue' }
+    );
+    const options = hx.calls.find(call => call[0] === 'messageBox')[1];
+    assert.equal(
+      options.text,
+      '自动保存 index.vue 失败：请检查文件权限或磁盘状态后重试。'
+    );
+  }
 });
 
 test('save errors use a basename and fixed reason for every supported document path shape', async () => {
@@ -365,6 +416,54 @@ test('save error preserves special characters in raw filesystem basenames', asyn
     const options = hx.calls.find(call => call[0] === 'messageBox')[1];
     assert.match(options.text, new RegExp(scenario.expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.doesNotMatch(options.text, /\n/);
+  }
+});
+
+test('URI filenames decode before applying Windows and POSIX basename rules', async () => {
+  const scenarios = [
+    {
+      uri: 'file:///placeholder/C%3A%5Cprivate%5Cproject%5Cindex.vue',
+      expected: 'index.vue'
+    },
+    {
+      uri: 'file:///placeholder/%2Fprivate%2Fproject%2Findex.vue',
+      expected: 'index.vue'
+    },
+    {
+      uri: 'file:///safe/index%23name.vue?token=secret#fragment',
+      expected: 'index#name.vue'
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    const hx = fakeHx();
+    await createHBuilderXRuntime(hx).reportSaveError(
+      new Error('denied'),
+      { uri: { toString: () => scenario.uri } }
+    );
+    const options = hx.calls.find(call => call[0] === 'messageBox')[1];
+    assert.equal(options.text, `自动保存 ${scenario.expected} 失败：denied`);
+    assert.doesNotMatch(options.text, /private|project|placeholder|token|fragment/i);
+  }
+});
+
+test('URI filenames fail closed on malformed encoding and decoded control characters', async () => {
+  const unsafeUris = [
+    'file:///safe/foo%0Abar.vue',
+    'file:///safe/foo%00bar.vue',
+    'file:///safe/foo%7Fbar.vue',
+    'file:///safe/foo%ZZbar.vue'
+  ];
+
+  for (const uri of unsafeUris) {
+    const hx = fakeHx();
+    await createHBuilderXRuntime(hx).reportSaveError(
+      new Error('denied'),
+      { uri: { toString: () => uri } }
+    );
+    const options = hx.calls.find(call => call[0] === 'messageBox')[1];
+    assert.equal(options.text, '自动保存 当前文件 失败：denied');
+    assert.doesNotMatch(options.text, /[\u0000-\u001F\u007F%]/);
   }
 });
 
