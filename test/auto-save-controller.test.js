@@ -27,6 +27,14 @@ function createClock() {
   };
 }
 
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function document(name, overrides = {}) {
   return {
     fileName: `C:\\project\\${name}`,
@@ -113,21 +121,74 @@ test('does not save a new active document with an old timer', async () => {
   assert.equal(saves, 0);
 });
 
-test('rechecks active document eligibility when the timer fires', async () => {
+test('saves when the active snapshot is a different object with the same key', async () => {
   const clock = createClock();
+  const changed = document('index.vue');
   const active = document('index.vue');
   let saves = 0;
   const controller = createAutoSaveController({
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
     getSettings: () => ({ enabled: true, delay: 1000 }),
-    getActiveSnapshot: async () => ({ document: active, readOnly: true }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
     saveActiveDocument: async () => { saves += 1; },
     reportSaveError: () => assert.fail('unexpected error')
   });
-  controller.handleDocumentChange({ document: active });
+  controller.handleDocumentChange({ document: changed });
   await clock.runLatest();
+  assert.equal(saves, 1);
+});
+
+test('a new edit invalidates an in-flight save check', async () => {
+  const clock = createClock();
+  const snapshot = createDeferred();
+  const changed = document('old.vue');
+  const next = document('new.vue');
+  let saves = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: () => snapshot.promise,
+    saveActiveDocument: async () => { saves += 1; },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+  controller.handleDocumentChange({ document: changed });
+  const inFlight = clock.runLatest();
+  controller.handleDocumentChange({ document: next });
+  snapshot.resolve({ document: changed, readOnly: false });
+  await inFlight;
   assert.equal(saves, 0);
+  assert.equal(clock.pending().length, 1);
+});
+
+test('rechecks every active document eligibility rule when the timer fires', async () => {
+  const cases = [
+    { name: 'clean', active: document('index.vue', { isDirty: false }), readOnly: false },
+    { name: 'non-file', active: document('index.vue', { uri: { scheme: 'http' } }), readOnly: false },
+    { name: 'untitled', active: document('index.vue', { isUntitled: true }), readOnly: false },
+    { name: 'read-only', active: document('index.vue'), readOnly: true }
+  ];
+
+  for (const scenario of cases) {
+    const clock = createClock();
+    const changed = document('index.vue');
+    let saves = 0;
+    const controller = createAutoSaveController({
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+      getSettings: () => ({ enabled: true, delay: 1000 }),
+      getActiveSnapshot: async () => ({
+        document: scenario.active,
+        readOnly: scenario.readOnly
+      }),
+      saveActiveDocument: async () => { saves += 1; },
+      reportSaveError: () => assert.fail('unexpected error')
+    });
+    controller.handleDocumentChange({ document: changed });
+    await clock.runLatest();
+    assert.equal(saves, 0, scenario.name);
+  }
 });
 
 test('disabled settings do not schedule and disabling cancels pending work', () => {
@@ -150,6 +211,51 @@ test('disabled settings do not schedule and disabling cancels pending work', () 
   settings.enabled = false;
   controller.handleConfigurationChange();
   assert.equal(clock.pending().length, 0);
+});
+
+test('disabling settings invalidates an in-flight save check', async () => {
+  const clock = createClock();
+  const snapshot = createDeferred();
+  const settings = { enabled: true, delay: 1000 };
+  const active = document('index.vue');
+  let saves = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => settings,
+    getActiveSnapshot: () => snapshot.promise,
+    saveActiveDocument: async () => { saves += 1; },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+  controller.handleDocumentChange({ document: active });
+  const inFlight = clock.runLatest();
+  settings.enabled = false;
+  controller.handleConfigurationChange();
+  snapshot.resolve({ document: active, readOnly: false });
+  await inFlight;
+  assert.equal(saves, 0);
+});
+
+test('an in-flight save check re-reads the enabled setting before saving', async () => {
+  const clock = createClock();
+  const snapshot = createDeferred();
+  const settings = { enabled: true, delay: 1000 };
+  const active = document('index.vue');
+  let saves = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => settings,
+    getActiveSnapshot: () => snapshot.promise,
+    saveActiveDocument: async () => { saves += 1; },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+  controller.handleDocumentChange({ document: active });
+  const inFlight = clock.runLatest();
+  settings.enabled = false;
+  snapshot.resolve({ document: active, readOnly: false });
+  await inFlight;
+  assert.equal(saves, 0);
 });
 
 test('configuration change reschedules pending work with normalized delay', () => {
@@ -188,6 +294,27 @@ test('dispose cancels pending work and prevents later scheduling', () => {
   assert.equal(clock.pending().length, 0);
 });
 
+test('dispose invalidates an in-flight save check', async () => {
+  const clock = createClock();
+  const snapshot = createDeferred();
+  const active = document('index.vue');
+  let saves = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: () => snapshot.promise,
+    saveActiveDocument: async () => { saves += 1; },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+  controller.handleDocumentChange({ document: active });
+  const inFlight = clock.runLatest();
+  controller.dispose();
+  snapshot.resolve({ document: active, readOnly: false });
+  await inFlight;
+  assert.equal(saves, 0);
+});
+
 test('reports one failed save and waits for a new edit before retrying', async () => {
   const clock = createClock();
   const active = document('index.vue');
@@ -207,4 +334,45 @@ test('reports one failed save and waits for a new edit before retrying', async (
   controller.handleDocumentChange({ document: active });
   await clock.runLatest();
   assert.equal(reports, 2);
+});
+
+test('absorbs a synchronous error from the save error reporter', async () => {
+  const clock = createClock();
+  const active = document('index.vue');
+  let reports = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => { throw new Error('save failed'); },
+    reportSaveError: () => {
+      reports += 1;
+      throw new Error('report failed');
+    }
+  });
+  controller.handleDocumentChange({ document: active });
+  await assert.doesNotReject(clock.runLatest());
+  assert.equal(reports, 1);
+});
+
+test('absorbs a rejected promise from the save error reporter', async () => {
+  const clock = createClock();
+  const active = document('index.vue');
+  let reports = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => { throw new Error('save failed'); },
+    reportSaveError: async () => {
+      reports += 1;
+      throw new Error('report failed');
+    }
+  });
+  controller.handleDocumentChange({ document: active });
+  await assert.doesNotReject(clock.runLatest());
+  await new Promise(setImmediate);
+  assert.equal(reports, 1);
 });
