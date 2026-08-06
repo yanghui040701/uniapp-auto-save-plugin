@@ -277,6 +277,49 @@ test('configuration change reschedules pending work with normalized delay', () =
   assert.equal(clock.pending()[0].delay, 200);
 });
 
+test('delay changes replace an in-flight save check without dropping the save', async () => {
+  const clock = createClock();
+  const firstSnapshot = createDeferred();
+  const settings = { enabled: true, delay: 1000 };
+  const changed = document('index.vue');
+  const active = document('index.vue');
+  let snapshotCalls = 0;
+  let saves = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => settings,
+    getActiveSnapshot: () => {
+      snapshotCalls += 1;
+      if (snapshotCalls === 1) return firstSnapshot.promise;
+      return Promise.resolve({ document: active, readOnly: false });
+    },
+    saveActiveDocument: async () => { saves += 1; },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+  controller.handleDocumentChange({ document: changed });
+  const staleRun = clock.runLatest();
+
+  settings.delay = 50;
+  controller.handleConfigurationChange();
+  assert.equal(clock.pending().length, 1);
+  assert.equal(clock.pending()[0].delay, 200);
+
+  settings.delay = 400;
+  controller.handleConfigurationChange();
+  assert.equal(clock.pending().length, 1);
+  assert.equal(clock.pending()[0].delay, 400);
+
+  firstSnapshot.resolve({ document: changed, readOnly: false });
+  await staleRun;
+  assert.equal(saves, 0);
+
+  await clock.runLatest();
+  await clock.runLatest();
+  assert.equal(saves, 1);
+  assert.equal(snapshotCalls, 2);
+});
+
 test('dispose cancels pending work and prevents later scheduling', () => {
   const clock = createClock();
   const active = document('index.vue');
