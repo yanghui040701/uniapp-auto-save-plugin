@@ -684,9 +684,9 @@ test('native prompt maps the selected Chinese button to a stable result', async 
   const options = hx.calls.find(call => call[0] === 'messageBox')[1];
   assert.deepEqual(options, {
     type: 'question',
-    title: '开启 HBuilderX 原生保存',
-    text: '是否开启 HBuilderX 的失去焦点自动保存？这可确保快速切换文件或应用时保存离开的文件。',
-    buttons: ['开启', '暂不开启']
+    title: '\u5f00\u542f HBuilderX \u5931\u53bb\u7126\u70b9\u81ea\u52a8\u4fdd\u5b58',
+    text: '\u68c0\u6d4b\u5230 HBuilderX \u7684\u201c\u5931\u53bb\u7126\u70b9\u81ea\u52a8\u4fdd\u5b58\u201d\u5df2\u5173\u95ed\u3002\u5f00\u542f\u540e\uff0c\u5373\u4f7f\u5728\u81ea\u52a8\u4fdd\u5b58\u5012\u8ba1\u65f6\u7ed3\u675f\u524d\u5207\u6362\u6587\u4ef6\u6216\u5e94\u7528\uff0c\u4e5f\u80fd\u4fdd\u5b58\u521a\u79bb\u5f00\u7684\u6587\u4ef6\u3002\u662f\u5426\u73b0\u5728\u5f00\u542f\uff1f',
+    buttons: ['\u5f00\u542f', '\u4e0d\u518d\u63d0\u793a']
   });
 });
 
@@ -697,19 +697,26 @@ test('native prompt assimilates a custom HBuilderX thenable', async () => {
     return resolvingThenable(options.buttons[1]);
   };
 
-  assert.equal(await createHBuilderXRuntime(hx).promptNativeFocusSave(), 'decline');
+  assert.equal(await createHBuilderXRuntime(hx).promptNativeFocusSave(), 'suppress');
 });
 
-test('native prompt maps dismissal and notification API failure to decline', async () => {
+test('native prompt distinguishes dismissal and unknown selections', async () => {
   const hx = fakeHx();
   hx.window.showMessageBox = async () => undefined;
-  assert.equal(await createHBuilderXRuntime(hx).promptNativeFocusSave(), 'decline');
+  assert.equal(await createHBuilderXRuntime(hx).promptNativeFocusSave(), 'dismiss');
+
+  hx.window.showMessageBox = async () => '\u672a\u77e5\u6309\u94ae';
+  assert.equal(await createHBuilderXRuntime(hx).promptNativeFocusSave(), 'dismiss');
+});
+
+test('native prompt maps notification API failure to dismiss', async () => {
+  const hx = fakeHx();
 
   hx.window.showMessageBox = async () => { throw new Error('window unavailable'); };
-  assert.equal(await createHBuilderXRuntime(hx).promptNativeFocusSave(), 'decline');
+  assert.equal(await createHBuilderXRuntime(hx).promptNativeFocusSave(), 'dismiss');
 
   delete hx.window.showMessageBox;
-  assert.equal(await createHBuilderXRuntime(hx).promptNativeFocusSave(), 'decline');
+  assert.equal(await createHBuilderXRuntime(hx).promptNativeFocusSave(), 'dismiss');
 });
 
 test('error and status notifications are best-effort', async () => {
@@ -739,7 +746,7 @@ test('best-effort notifications absorb synchronous message-box errors', async ()
   await assert.doesNotReject(runtime.reportInternalError(new Error('internal')));
   await assert.doesNotReject(runtime.showNativeFocusSaveEnabled());
   await assert.doesNotReject(runtime.showNativeFocusSaveManualFallback());
-  assert.equal(await runtime.promptNativeFocusSave(), 'decline');
+  assert.equal(await runtime.promptNativeFocusSave(), 'dismiss');
 });
 
 test('best-effort notifications assimilate rejected custom thenables', async () => {
@@ -748,7 +755,7 @@ test('best-effort notifications assimilate rejected custom thenables', async () 
   const runtime = createHBuilderXRuntime(hx);
 
   await assert.doesNotReject(runtime.reportInternalError(new Error('internal')));
-  assert.equal(await runtime.promptNativeFocusSave(), 'decline');
+  assert.equal(await runtime.promptNativeFocusSave(), 'dismiss');
 });
 
 test('fire-and-forget notification failures do not create unhandled rejections', () => {
