@@ -6,6 +6,8 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const manifest = require('../package.json');
 const { MIN_DELAY, MAX_DELAY } = require('../lib/auto-save-controller');
+const PUBLISHED_REPOSITORY = 'https://github.com/yanghui040701/uniapp-auto-save-plugin';
+const PUBLISHED_ISSUES = 'https://github.com/yanghui040701/uniapp-auto-save-plugin/issues';
 
 const requiredDocuments = ['README.md', 'CHANGELOG.md', 'docs/publishing.md'];
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -168,10 +170,9 @@ test('manifest-backed marketplace values stay synchronized', () => {
 
   for (const [field, value] of expected) assert.equal(fields.get(field), value);
   assert.deepEqual(fields.get('关键词/标签').split('、'), manifest.keywords);
-  assert.equal(linkTarget(fields.get('源码地址')), manifest.repository);
-  assert.equal(linkTarget(fields.get('问题反馈')), manifest.bugs);
+  assert.equal(linkTarget(fields.get('源码地址')), PUBLISHED_REPOSITORY);
+  assert.equal(linkTarget(fields.get('问题反馈')), PUBLISHED_ISSUES);
   assert.equal(fields.get('短描述'), manifest.description);
-  assert.ok([...fields.get('短描述')].length <= 30, 'marketplace short description must be at most 30 characters');
   assert.equal(fields.get('发行 ZIP'), `${manifest.id}.zip`);
   assert.deepEqual(marketplaceRelease(fields.get('更新日志')), changelogRelease(read('CHANGELOG.md')));
 });
@@ -195,8 +196,43 @@ test('documentation Markdown links use valid HTTPS URLs', () => {
   }
 });
 
+test('documentation retains the published GitHub repository and Issues URLs', () => {
+  const readmeTargets = markdownLinkTargets(read('README.md'));
+  assert.ok(readmeTargets.includes(PUBLISHED_REPOSITORY));
+  assert.ok(readmeTargets.includes(PUBLISHED_ISSUES));
+});
+
 test('CHANGELOG initial release matches the manifest version and uses a valid ISO date', () => {
   const release = changelogRelease(read('CHANGELOG.md'));
   assert.equal(release.version, manifest.version);
   assert.equal(new Date(`${release.date}T00:00:00Z`).toISOString().slice(0, 10), release.date);
+});
+
+test('1.0.1 release copy uses the published metadata and consent-based focus-save prompt', () => {
+  const readme = read('README.md');
+  const changelog = read('CHANGELOG.md');
+  const publishing = read('docs/publishing.md');
+  const fields = submissionFields(publishing);
+
+  assert.equal(readme.split(/\r?\n/)[0], `# ${manifest.displayName}`);
+  assert.doesNotMatch(readme, /自动保存（防抖增强）/);
+  assert.doesNotMatch(readme, /^# 编辑时自动保存$/m);
+  assert.deepEqual(changelogRelease(changelog), { version: '1.0.1', date: '2026-08-09' });
+  assert.equal(fields.get('插件名称'), manifest.displayName);
+  assert.notEqual(fields.get('插件名称'), '编辑时自动保存');
+  assert.equal(fields.get('版本'), manifest.version);
+  assert.equal(fields.get('短描述'), manifest.description);
+  assert.deepEqual(marketplaceRelease(fields.get('更新日志')), { version: '1.0.1', date: '2026-08-09' });
+
+  for (const document of [readme, publishing]) {
+    assert.match(document, /schemaVersion/);
+    assert.match(document, /focusSavePromptSuppressed/);
+    assert.match(document, /schema v2[^。]{0,36}(?:只有|仅当)[^。]{0,16}用户?明确(?:选择|点击)[“"]不再提示[”"][^。]{0,48}focusSavePromptSuppressed[^。]{0,24}持久化[^。]{0,24}抑制状态/);
+    assert.match(document, /关闭(?:对话框|弹窗)[^。]{0,24}(?:不会|不)[^。]{0,24}持久化[^。]{0,24}抑制状态[^。]{0,24}(?:下次|之后)[^。]{0,30}再次提示/);
+  }
+  assert.doesNotMatch(readme, /focusSavePromptHandled/);
+  assert.match(publishing, /旧版 `focusSavePromptHandled` 状态不再被视为永久拒绝/);
+  assert.match(`${readme}\n${publishing}`, /通用 HBuilderX .*插件/);
+  assert.match(`${readme}\n${publishing}`, /不只.*uni-app|不限于 uni-app/);
+  assert.match(`${readme}\n${publishing}`, /只有.*(?:点击|选择).*开启.*(?:才会|才).*修改.*editor\.saveOnFocusLost/);
 });

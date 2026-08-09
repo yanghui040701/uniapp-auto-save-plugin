@@ -1,9 +1,9 @@
 {
   "id": "yanghui-auto-save",
   "name": "HBuilderX Auto Save",
-  "displayName": "自动保存（防抖增强）",
-  "description": "停止输入后防抖保存，并协同原生失焦保存",
-  "version": "1.0.0",
+  "displayName": "编辑防抖自动保存",
+  "description": "为 HBuilderX 提供编辑时防抖自动保存，并可引导开启原生失焦自动保存，避免快速切换文件时遗漏保存。",
+  "version": "1.0.1",
   "publisher": "yanghui040701",
   "license": "MIT",
   "engines": { "HBuilderX": "^3.2.3" },
@@ -13,7 +13,7 @@
   "activationEvents": ["*"],
   "contributes": {
     "configuration": {
-      "title": "自动保存（防抖增强）",
+      "title": "编辑防抖自动保存",
       "properties": {
         "hbuilderx-auto-save.enabled": {
           "type": "boolean",
@@ -30,7 +30,7 @@
     "commands": [
       {
         "command": "yanghui-auto-save.checkFocusSave",
-        "title": "自动保存：检查并开启 HBuilderX 原生失焦保存"
+        "title": "编辑防抖自动保存：检查并开启 HBuilderX 原生失焦保存"
       }
     ]
   },

@@ -57,7 +57,10 @@ function createRuntimeFixture() {
   };
 }
 
-function createProductionHx(appData) {
+function createProductionHx(appData, {
+  nativeFocusSaveEnabled = true,
+  promptChoice = 'dismiss'
+} = {}) {
   const disposable = { dispose() {} };
   return {
     env: appData === undefined ? {} : { appData },
@@ -65,7 +68,9 @@ function createProductionHx(appData) {
       getConfiguration(section) {
         return {
           get(key, fallback) {
-            if (section === 'editor' && key === 'saveOnFocusLost') return true;
+            if (section === 'editor' && key === 'saveOnFocusLost') {
+              return nativeFocusSaveEnabled;
+            }
             return fallback;
           },
           update() { return Promise.resolve(); }
@@ -78,7 +83,14 @@ function createProductionHx(appData) {
       executeCommand() { return Promise.resolve(); },
       registerCommand() { return disposable; }
     },
-    window: {}
+    window: {
+      showMessageBox(options) {
+        if (options.type !== 'question') return undefined;
+        if (promptChoice === 'suppress') return options.buttons[1];
+        if (promptChoice === 'enable') return options.buttons[0];
+        return undefined;
+      }
+    }
   };
 }
 
@@ -278,8 +290,8 @@ test('back-to-back activations allow only the current real coordinator to prompt
   let handled = false;
   let prompts = 0;
   const state = {
-    wasHandled: () => handled,
-    markHandled() {
+    isSuppressed: () => handled,
+    suppress() {
       handled = true;
       return true;
     }
@@ -291,7 +303,7 @@ test('back-to-back activations allow only the current real coordinator to prompt
         isNativeFocusSaveEnabled: () => false,
         promptNativeFocusSave() {
           prompts += 1;
-          return Promise.resolve('decline');
+          return Promise.resolve('suppress');
         },
         enableNativeFocusSave: async () => {},
         showNativeFocusSaveEnabled: async () => {},
@@ -511,7 +523,7 @@ test('ignored command and event callbacks are strict-unhandled-safe', () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test('production activation stores state under HBuilderX appData, never extensionPath', async () => {
+test('production activation with native focus save enabled does not create state', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yanghui-extension-appdata-'));
   const appData = path.join(root, 'app-data');
   const extensionPath = path.join(root, 'published-extension');
@@ -522,10 +534,7 @@ test('production activation stores state under HBuilderX appData, never extensio
   try {
     await withMockedModules({ hbuilderx: createProductionHx(appData) }, () => activate(context));
 
-    assert.equal(fs.existsSync(stateFile), true);
-    assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')), {
-      focusSavePromptHandled: true
-    });
+    assert.equal(fs.existsSync(stateFile), false);
     assert.deepEqual(fs.readdirSync(extensionPath), []);
     assert.equal(context.subscriptions.length, 3);
   } finally {
@@ -534,7 +543,34 @@ test('production activation stores state under HBuilderX appData, never extensio
   }
 });
 
-test('production activation falls back to the user home when appData is unavailable', async () => {
+test('production activation persists schema v2 suppression under HBuilderX appData', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yanghui-extension-appdata-'));
+  const appData = path.join(root, 'app-data');
+  const extensionPath = path.join(root, 'published-extension');
+  fs.mkdirSync(extensionPath, { recursive: true });
+  const context = { subscriptions: [], extensionPath };
+  const stateFile = path.join(appData, 'extensions', 'yanghui-auto-save', 'state.json');
+
+  try {
+    await withMockedModules({
+      hbuilderx: createProductionHx(appData, {
+        nativeFocusSaveEnabled: false,
+        promptChoice: 'suppress'
+      })
+    }, () => activate(context));
+
+    assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')), {
+      schemaVersion: 2,
+      focusSavePromptSuppressed: true
+    });
+    assert.deepEqual(fs.readdirSync(extensionPath), []);
+  } finally {
+    deactivate();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('production activation persists schema v2 suppression in a temporary fallback home', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yanghui-extension-home-'));
   const fallbackHome = path.join(root, 'home');
   const extensionPath = path.join(root, 'published-extension');
@@ -544,13 +580,16 @@ test('production activation falls back to the user home when appData is unavaila
 
   try {
     await withMockedModules({
-      hbuilderx: createProductionHx(undefined),
+      hbuilderx: createProductionHx(undefined, {
+        nativeFocusSaveEnabled: false,
+        promptChoice: 'suppress'
+      }),
       'node:os': { homedir: () => fallbackHome }
     }, () => activate(context));
 
-    assert.equal(fs.existsSync(stateFile), true);
     assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')), {
-      focusSavePromptHandled: true
+      schemaVersion: 2,
+      focusSavePromptSuppressed: true
     });
     assert.deepEqual(fs.readdirSync(extensionPath), []);
   } finally {

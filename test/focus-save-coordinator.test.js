@@ -7,360 +7,272 @@ const { createFocusSaveCoordinator } = require('../lib/focus-save-coordinator');
 function fixture(overrides = {}) {
   const calls = [];
   const runtime = {
-    isNativeFocusSaveEnabled: () => false,
+    isNativeFocusSaveEnabled: () => { calls.push('native'); return false; },
     promptNativeFocusSave: async () => { calls.push('prompt'); return 'enable'; },
-    enableNativeFocusSave: async () => { calls.push('enable'); },
-    showNativeFocusSaveEnabled: async () => { calls.push('already-enabled'); },
-    showNativeFocusSaveManualFallback: async () => { calls.push('manual'); },
+    enableNativeFocusSave: async () => { calls.push('update'); },
+    showNativeFocusSaveEnabled: async () => { calls.push('enabled-info'); },
+    showNativeFocusSaveManualFallback: async () => { calls.push('manual-fallback'); },
     ...overrides.runtime
   };
-  const state = {
-    wasHandled: () => false,
-    markHandled: () => { calls.push('handled'); return true; },
-    ...overrides.state
+  const state = overrides.state || {
+    isSuppressed: () => false,
+    suppress: () => { calls.push('suppress'); return true; }
   };
   return { calls, coordinator: createFocusSaveCoordinator({ runtime, state }) };
 }
 
-function rejectingThenable(error, onThen = () => {}) {
+function trackingState(calls, suppressed = false) {
   return {
-    then(_resolve, reject) {
-      onThen();
-      reject(error);
-    }
+    isSuppressed: () => { calls.push('state'); return suppressed; },
+    suppress: () => { calls.push('suppress'); return true; }
   };
+}
+
+function rejectingThenable(error, onThen = () => {}) {
+  return { then(_resolve, reject) { onThen(); reject(error); } };
 }
 
 function deferred() {
   let resolve;
-  const promise = new Promise(resolvePromise => {
-    resolve = resolvePromise;
-  });
+  const promise = new Promise(resolvePromise => { resolve = resolvePromise; });
   return { promise, resolve };
 }
 
-function strictFireAndForgetResult(branch, failureKind) {
-  const script = `
-    const assert = require('node:assert/strict');
-    const { createFocusSaveCoordinator } = require('./lib/focus-save-coordinator');
-    const branch = ${JSON.stringify(branch)};
-    const calls = [];
-    const failureCall = branch === 'prompt'
-      ? 'prompt'
-      : branch === 'enabled confirmation' ? 'already-enabled' : 'manual';
-    const failures = {
-      sync: () => { calls.push(failureCall); throw new Error('UI failed'); },
-      promise: () => { calls.push(failureCall); return Promise.reject(new Error('UI failed')); },
-      thenable: () => {
-        calls.push(failureCall);
-        return { then(_resolve, reject) { reject(new Error('UI failed')); } };
-      }
-    };
-    const failure = failures[${JSON.stringify(failureKind)}];
-    const runtime = {
-      isNativeFocusSaveEnabled: () => { calls.push('native-read'); return false; },
-      promptNativeFocusSave: () => { calls.push('prompt'); return Promise.resolve('enable'); },
-      enableNativeFocusSave: () => { calls.push('enable'); return Promise.resolve(); },
-      showNativeFocusSaveEnabled: () => { calls.push('already-enabled'); return Promise.resolve(); },
-      showNativeFocusSaveManualFallback: () => { calls.push('manual'); return Promise.resolve(); }
-    };
-    const force = branch === 'enabled confirmation';
-    if (branch === 'prompt') runtime.promptNativeFocusSave = failure;
-    if (branch === 'enabled confirmation') {
-      runtime.isNativeFocusSaveEnabled = () => { calls.push('native-read'); return true; };
-      runtime.showNativeFocusSaveEnabled = failure;
-    }
-    if (branch === 'manual fallback') {
-      runtime.enableNativeFocusSave = () => {
-        calls.push('enable');
-        return Promise.reject(new Error('unsupported'));
-      };
-      runtime.showNativeFocusSaveManualFallback = failure;
-    }
-    const coordinator = createFocusSaveCoordinator({
-      runtime,
-      state: {
-        wasHandled: () => false,
-        markHandled: () => { calls.push('handled'); return true; }
-      }
-    });
-    coordinator.ensure({ force });
-    setImmediate(() => {
-      const expected = {
-        prompt: ['native-read', 'prompt'],
-        'enabled confirmation': ['native-read', 'handled', 'already-enabled'],
-        'manual fallback': ['native-read', 'prompt', 'enable', 'handled', 'manual']
-      };
-      assert.deepEqual(calls, expected[branch]);
-      assert.equal(calls.includes('already-enabled'), branch === 'enabled confirmation');
-      process.exit(0);
-    });
-  `;
-  return spawnSync(
-    process.execPath,
-    ['--unhandled-rejections=strict', '-e', script],
-    { cwd: path.resolve(__dirname, '..'), encoding: 'utf8' }
-  );
-}
-
-test('already-enabled native setting skips prompt and marks handled', async () => {
-  const item = fixture({ runtime: { isNativeFocusSaveEnabled: () => true } });
-  await item.coordinator.ensure({ force: false });
-  assert.deepEqual(item.calls, ['handled']);
+test('automatic check ends silently when native focus save is already enabled', async () => {
+  const item = fixture({ runtime: { isNativeFocusSaveEnabled: () => { item.calls.push('native'); return true; } } });
+  await item.coordinator.ensure();
+  assert.deepEqual(item.calls, ['native']);
 });
 
-test('handled state skips the automatic check', async () => {
-  const item = fixture({ state: { wasHandled: () => true } });
-  await item.coordinator.ensure({ force: false });
-  assert.deepEqual(item.calls, []);
+test('forced check shows enabled information when native focus save is already enabled', async () => {
+  const item = fixture({ runtime: { isNativeFocusSaveEnabled: () => { item.calls.push('native'); return true; } } });
+  await item.coordinator.ensure({ force: true });
+  assert.deepEqual(item.calls, ['native', 'enabled-info']);
 });
 
-test('decline marks handled without changing HBuilderX settings', async () => {
-  const item = fixture({
+test('automatic check ends after suppression when native focus save is disabled', async () => {
+  const item = fixture({ state: null });
+  item.coordinator = createFocusSaveCoordinator({
     runtime: {
-      promptNativeFocusSave: async () => { item.calls.push('prompt'); return 'decline'; }
-    }
-  });
-  await item.coordinator.ensure({ force: false });
-  assert.deepEqual(item.calls, ['prompt', 'handled']);
-});
-
-test('consent updates native setting and marks handled', async () => {
-  const item = fixture();
-  await item.coordinator.ensure({ force: false });
-  assert.deepEqual(item.calls, ['prompt', 'enable', 'handled']);
-});
-
-test('failed update falls back to manual instructions without throwing', async () => {
-  const item = fixture({
-    runtime: {
-      enableNativeFocusSave: async () => {
-        item.calls.push('enable');
-        throw new Error('unsupported');
-      }
-    }
-  });
-  await assert.doesNotReject(item.coordinator.ensure({ force: false }));
-  assert.deepEqual(item.calls, ['prompt', 'enable', 'handled', 'manual']);
-});
-
-test('state write failure does not suppress manual fallback', async () => {
-  const item = fixture({
-    runtime: {
-      enableNativeFocusSave: async () => {
-        item.calls.push('enable');
-        throw new Error('unsupported');
-      }
+      isNativeFocusSaveEnabled: () => { item.calls.push('native'); return false; },
+      promptNativeFocusSave: async () => { item.calls.push('prompt'); return 'enable'; }
     },
-    state: {
-      markHandled: () => {
-        item.calls.push('handled');
-        throw new Error('unwritable');
-      }
-    }
+    state: trackingState(item.calls, true)
   });
-  await assert.doesNotReject(item.coordinator.ensure({ force: false }));
-  assert.deepEqual(item.calls, ['prompt', 'enable', 'handled', 'manual']);
+  await item.coordinator.ensure();
+  assert.deepEqual(item.calls, ['native', 'state']);
 });
 
-test('rejected handled-state thenable is treated as not handled', async () => {
-  const item = fixture({
-    state: {
-      wasHandled: () => rejectingThenable(new Error('unreadable'), () => {
-        item.calls.push('handled-read');
-      })
-    }
-  });
-  await assert.doesNotReject(item.coordinator.ensure({ force: false }));
-  assert.deepEqual(item.calls, ['handled-read', 'prompt', 'enable', 'handled']);
-});
-
-test('rejected native-setting thenable is treated as disabled', async () => {
-  const item = fixture({
+test('forced check ignores suppression when native focus save is disabled', async () => {
+  const item = fixture({ state: null });
+  item.coordinator = createFocusSaveCoordinator({
     runtime: {
-      isNativeFocusSaveEnabled: () => rejectingThenable(new Error('unreadable'), () => {
-        item.calls.push('native-read');
-      })
-    }
-  });
-  await assert.doesNotReject(item.coordinator.ensure({ force: false }));
-  assert.deepEqual(item.calls, ['native-read', 'prompt', 'enable', 'handled']);
-});
-
-test('rejected state-write thenable does not suppress manual fallback', async () => {
-  const item = fixture({
-    runtime: {
-      enableNativeFocusSave: async () => {
-        item.calls.push('enable');
-        throw new Error('unsupported');
-      }
+      isNativeFocusSaveEnabled: () => { item.calls.push('native'); return false; },
+      promptNativeFocusSave: async () => { item.calls.push('prompt'); return 'dismiss'; }
     },
-    state: {
-      markHandled: () => {
-        item.calls.push('handled');
-        return rejectingThenable(new Error('unwritable'), () => {
-          item.calls.push('state-write');
-        });
-      }
-    }
+    state: trackingState(item.calls, true)
   });
-  await assert.doesNotReject(item.coordinator.ensure({ force: false }));
-  assert.deepEqual(item.calls, ['prompt', 'enable', 'handled', 'state-write', 'manual']);
+  await item.coordinator.ensure({ force: true });
+  assert.deepEqual(item.calls, ['native', 'prompt']);
 });
 
-test('fire-and-forget rejected state writes do not create unhandled rejections', () => {
-  const script = `
-    const { createFocusSaveCoordinator } = require('./lib/focus-save-coordinator');
-    const coordinator = createFocusSaveCoordinator({
-      runtime: {
-        isNativeFocusSaveEnabled: () => false,
-        promptNativeFocusSave: () => Promise.resolve('decline')
-      },
-      state: {
-        wasHandled: () => false,
-        markHandled: () => Promise.reject(new Error('unwritable'))
-      }
-    });
-    coordinator.ensure({ force: false });
-    setImmediate(() => process.exit(0));
-  `;
-  const result = spawnSync(
-    process.execPath,
-    ['--unhandled-rejections=strict', '-e', script],
-    { cwd: path.resolve(__dirname, '..'), encoding: 'utf8' }
-  );
-
-  assert.equal(result.status, 0, result.stderr);
+test('enable choice updates native focus save without suppressing state', async () => {
+  const item = fixture({ state: null });
+  item.coordinator = createFocusSaveCoordinator({
+    runtime: {
+      isNativeFocusSaveEnabled: () => { item.calls.push('native'); return false; },
+      promptNativeFocusSave: async () => { item.calls.push('prompt'); return 'enable'; },
+      enableNativeFocusSave: async () => { item.calls.push('update'); }
+    },
+    state: trackingState(item.calls)
+  });
+  await item.coordinator.ensure();
+  assert.deepEqual(item.calls, ['native', 'state', 'prompt', 'update']);
 });
 
-for (const branch of ['prompt', 'enabled confirmation', 'manual fallback']) {
+test('suppress choice persists suppression without updating native focus save', async () => {
+  const item = fixture({ state: null });
+  item.coordinator = createFocusSaveCoordinator({
+    runtime: {
+      isNativeFocusSaveEnabled: () => { item.calls.push('native'); return false; },
+      promptNativeFocusSave: async () => { item.calls.push('prompt'); return 'suppress'; }
+    },
+    state: trackingState(item.calls)
+  });
+  await item.coordinator.ensure();
+  assert.deepEqual(item.calls, ['native', 'state', 'prompt', 'suppress']);
+});
+
+test('dismiss choice does not persist suppression or update native focus save', async () => {
+  const item = fixture({ state: null });
+  item.coordinator = createFocusSaveCoordinator({
+    runtime: {
+      isNativeFocusSaveEnabled: () => { item.calls.push('native'); return false; },
+      promptNativeFocusSave: async () => { item.calls.push('prompt'); return 'dismiss'; }
+    },
+    state: trackingState(item.calls)
+  });
+  await item.coordinator.ensure();
+  assert.deepEqual(item.calls, ['native', 'state', 'prompt']);
+});
+
+test('failed native update shows manual fallback without suppressing state', async () => {
+  const item = fixture({ state: null });
+  item.coordinator = createFocusSaveCoordinator({
+    runtime: {
+      isNativeFocusSaveEnabled: () => { item.calls.push('native'); return false; },
+      promptNativeFocusSave: async () => { item.calls.push('prompt'); return 'enable'; },
+      enableNativeFocusSave: async () => { item.calls.push('update'); throw new Error('unsupported'); },
+      showNativeFocusSaveManualFallback: async () => { item.calls.push('manual-fallback'); }
+    },
+    state: trackingState(item.calls)
+  });
+  await assert.doesNotReject(item.coordinator.ensure());
+  assert.deepEqual(item.calls, ['native', 'state', 'prompt', 'update', 'manual-fallback']);
+});
+
+for (const [branch, force, nativeEnabled, choice] of [
+  ['prompt', false, false, 'enable'],
+  ['enabled-info', true, true, 'enable'],
+  ['manual-fallback', false, false, 'enable']
+]) {
   for (const failureKind of ['sync', 'promise', 'thenable']) {
     test(`fire-and-forget ${branch} absorbs ${failureKind} failures`, () => {
-      const result = strictFireAndForgetResult(branch, failureKind);
+      const script = `
+        const assert = require('node:assert/strict');
+        const { createFocusSaveCoordinator } = require('./lib/focus-save-coordinator');
+        const calls = [];
+        const failure = {
+          sync: () => { calls.push(${JSON.stringify(branch)}); throw new Error('UI failed'); },
+          promise: () => { calls.push(${JSON.stringify(branch)}); return Promise.reject(new Error('UI failed')); },
+          thenable: () => ({ then(_resolve, reject) { calls.push(${JSON.stringify(branch)}); reject(new Error('UI failed')); } })
+        }[${JSON.stringify(failureKind)}];
+        const runtime = {
+          isNativeFocusSaveEnabled: () => ${nativeEnabled},
+          promptNativeFocusSave: () => Promise.resolve(${JSON.stringify(choice)}),
+          enableNativeFocusSave: () => ${branch === 'manual-fallback' ? "Promise.reject(new Error('unsupported'))" : 'Promise.resolve()'},
+          showNativeFocusSaveEnabled: () => Promise.resolve(),
+          showNativeFocusSaveManualFallback: () => Promise.resolve()
+        };
+        runtime[${JSON.stringify(branch === 'enabled-info' ? 'showNativeFocusSaveEnabled' : branch === 'manual-fallback' ? 'showNativeFocusSaveManualFallback' : 'promptNativeFocusSave')}] = failure;
+        createFocusSaveCoordinator({ runtime, state: { isSuppressed: () => false, suppress: () => true } }).ensure({ force: ${force} });
+        setImmediate(() => process.exit(0));
+      `;
+      const result = spawnSync(process.execPath, ['--unhandled-rejections=strict', '-e', script], {
+        cwd: path.resolve(__dirname, '..'), encoding: 'utf8'
+      });
       assert.equal(result.status, 0, result.stderr);
     });
   }
 }
 
-test('overlapping automatic checks share one prompt update and state write', async () => {
-  const prompt = deferred();
-  const calls = [];
-  let handled = false;
-  const coordinator = createFocusSaveCoordinator({
-    runtime: {
-      isNativeFocusSaveEnabled: () => false,
-      promptNativeFocusSave: async () => {
-        calls.push('prompt');
-        return prompt.promise;
-      },
-      enableNativeFocusSave: async () => { calls.push('enable'); }
-    },
+test('rejected suppression-state thenable is treated as unsuppressed', async () => {
+  const item = fixture({
     state: {
-      wasHandled: () => handled,
-      markHandled: () => {
-        calls.push('handled');
-        handled = true;
-        return true;
-      }
+      isSuppressed: () => rejectingThenable(new Error('unreadable'), () => item.calls.push('state')),
+      suppress: () => { item.calls.push('suppress'); return true; }
     }
   });
-
-  const first = coordinator.ensure({ force: false });
-  const second = coordinator.ensure({ force: false });
-  assert.equal(second, first);
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(calls, ['prompt']);
-
-  prompt.resolve('enable');
-  await Promise.all([first, second]);
-  assert.deepEqual(calls, ['prompt', 'enable', 'handled']);
-
-  const afterCompletion = coordinator.ensure({ force: false });
-  assert.notEqual(afterCompletion, first);
-  await afterCompletion;
-  assert.deepEqual(calls, ['prompt', 'enable', 'handled']);
+  await assert.doesNotReject(item.coordinator.ensure());
+  assert.deepEqual(item.calls, ['native', 'state', 'prompt', 'update']);
 });
 
-test('a forced check upgrades and joins an overlapping automatic check', async () => {
-  const handledRead = deferred();
+test('overlapping automatic checks share one flight', async () => {
+  const prompt = deferred();
   const calls = [];
   const coordinator = createFocusSaveCoordinator({
     runtime: {
-      isNativeFocusSaveEnabled: () => {
-        calls.push('native-read');
-        return true;
-      },
-      showNativeFocusSaveEnabled: async () => { calls.push('already-enabled'); }
+      isNativeFocusSaveEnabled: () => { calls.push('native'); return false; },
+      promptNativeFocusSave: () => { calls.push('prompt'); return prompt.promise; },
+      enableNativeFocusSave: async () => { calls.push('update'); }
+    },
+    state: trackingState(calls)
+  });
+  const first = coordinator.ensure();
+  const second = coordinator.ensure();
+  assert.equal(second, first);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, ['native', 'state', 'prompt']);
+  prompt.resolve('enable');
+  await Promise.all([first, second]);
+  assert.deepEqual(calls, ['native', 'state', 'prompt', 'update']);
+});
+
+test('forced call upgrades an automatic flight before it reads suppression', async () => {
+  const native = deferred();
+  const calls = [];
+  let stateReads = 0;
+  const coordinator = createFocusSaveCoordinator({
+    runtime: {
+      isNativeFocusSaveEnabled: () => { calls.push('native'); return native.promise; },
+      promptNativeFocusSave: async () => { calls.push('prompt'); return 'dismiss'; }
     },
     state: {
-      wasHandled: async () => {
-        calls.push('handled-read');
-        return handledRead.promise;
-      },
-      markHandled: () => { calls.push('handled'); return true; }
+      isSuppressed: () => { stateReads += 1; calls.push('state'); return true; },
+      suppress: () => { calls.push('suppress'); return true; }
     }
   });
-
-  const automatic = coordinator.ensure({ force: false });
+  const automatic = coordinator.ensure();
   await Promise.resolve();
   const forced = coordinator.ensure({ force: true });
   assert.equal(forced, automatic);
-  handledRead.resolve(true);
-
+  native.resolve(false);
   await Promise.all([automatic, forced]);
-  assert.deepEqual(calls, ['handled-read', 'native-read', 'handled', 'already-enabled']);
+  assert.equal(stateReads, 0);
+  assert.deepEqual(calls, ['native', 'prompt']);
 });
 
-test('a forced check after the decision point starts a new flight', async () => {
+test('forced call upgrades an automatic flight while suppression read is pending', async () => {
+  const suppression = deferred();
+  const stateStarted = deferred();
   const calls = [];
-  let forced;
-  let scheduled = false;
-  let coordinator;
-  coordinator = createFocusSaveCoordinator({
+  const coordinator = createFocusSaveCoordinator({
     runtime: {
-      isNativeFocusSaveEnabled: () => {
-        calls.push('native-read');
-        return true;
-      },
-      showNativeFocusSaveEnabled: async () => { calls.push('already-enabled'); }
+      isNativeFocusSaveEnabled: () => { calls.push('native'); return false; },
+      promptNativeFocusSave: async () => { calls.push('prompt'); return 'dismiss'; }
     },
     state: {
-      wasHandled: () => {
-        calls.push('handled-read');
-        return false;
+      isSuppressed: () => {
+        calls.push('state');
+        stateStarted.resolve();
+        return suppression.promise;
       },
-      markHandled: () => ({
-        then(resolve) {
-          calls.push('handled');
-          resolve();
-          if (!scheduled) {
-            scheduled = true;
-            queueMicrotask(() => queueMicrotask(() => {
-              calls.push('forced-called');
-              forced = coordinator.ensure({ force: true });
-            }));
-          }
-        }
-      })
+      suppress: () => { calls.push('suppress'); return true; }
     }
   });
+  const automatic = coordinator.ensure();
+  await stateStarted.promise;
+  assert.deepEqual(calls, ['native', 'state']);
 
-  const automatic = coordinator.ensure({ force: false });
-  await automatic;
-  assert.ok(forced);
-  assert.notEqual(forced, automatic);
-  await forced;
-  assert.deepEqual(calls, [
-    'handled-read', 'native-read', 'handled', 'forced-called',
-    'handled-read', 'native-read', 'handled', 'already-enabled'
-  ]);
+  const forced = coordinator.ensure({ force: true });
+  assert.equal(forced, automatic);
+  suppression.resolve(true);
+  await Promise.all([automatic, forced]);
+
+  assert.deepEqual(calls, ['native', 'state', 'prompt']);
 });
 
-test('forced check ignores handled state and confirms enabled status', async () => {
-  const item = fixture({
-    runtime: { isNativeFocusSaveEnabled: () => true },
-    state: { wasHandled: () => true }
+test('a completed flight is cleared so a later check runs again', async () => {
+  const item = fixture();
+  const first = item.coordinator.ensure();
+  await first;
+  const second = item.coordinator.ensure();
+  assert.notEqual(second, first);
+  await second;
+  assert.deepEqual(item.calls, ['native', 'prompt', 'update', 'native', 'prompt', 'update']);
+});
+
+test('a user who later disables native focus save is prompted again', async () => {
+  const calls = [];
+  let nativeReads = 0;
+  const coordinator = createFocusSaveCoordinator({
+    runtime: {
+      isNativeFocusSaveEnabled: () => { calls.push('native'); return nativeReads++ === 0; },
+      promptNativeFocusSave: async () => { calls.push('prompt'); return 'dismiss'; }
+    },
+    state: trackingState(calls)
   });
-  await item.coordinator.ensure({ force: true });
-  assert.deepEqual(item.calls, ['handled', 'already-enabled']);
+  await coordinator.ensure();
+  await coordinator.ensure();
+  assert.deepEqual(calls, ['native', 'native', 'state', 'prompt']);
 });
