@@ -253,7 +253,7 @@ test('invalid validation roots return errors instead of escaping exceptions', ()
   }
 });
 
-test('package script creates only the nine allowlisted files under one archive root', (t) => {
+test('package script creates only the nine allowlisted files at the ZIP root', (t) => {
   const root = createPackagingFixture(t);
   for (const unwanted of [
     'test/private.test.js',
@@ -276,13 +276,9 @@ test('package script creates only the nine allowlisted files under one archive r
   const zipPath = path.join(root, 'dist', 'yanghui-auto-save.zip');
   const entries = readZipEntries(zipPath).map((entry) => entry.replaceAll('\\', '/'));
   const fileEntries = entries.filter((entry) => !entry.endsWith('/'));
-  assert.deepEqual(
-    fileEntries.toSorted(),
-    EXPECTED_FILES.map((file) => `yanghui-auto-save/${file}`).toSorted()
-  );
-  assert.deepEqual([...new Set(fileEntries.map((entry) => entry.split('/')[0]))], [
-    'yanghui-auto-save'
-  ]);
+  assert.deepEqual(fileEntries.toSorted(), EXPECTED_FILES.toSorted());
+  assert.equal(fileEntries.includes('package.json'), true);
+  assert.equal(fileEntries.some((entry) => entry.startsWith('yanghui-auto-save/')), false);
 });
 
 test('package script rejects a dist junction before deleting outside files', (t) => {

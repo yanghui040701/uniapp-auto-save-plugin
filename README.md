@@ -141,7 +141,7 @@ npm run validate
 npm run package
 ```
 
-`npm run package` 会先重复运行完整测试和发布白名单校验，任一步失败都会停止。最终上传候选文件是 `dist/yanghui-auto-save.zip`；压缩包内只有一个顶层 `yanghui-auto-save` 目录及经过校验的 9 个发布文件。`dist/yanghui-auto-save/` 暂存目录也会保留，便于发布前检查。
+`npm run package` 会先重复运行完整测试和发布白名单校验，任一步失败都会停止。最终上传候选文件是 `dist/yanghui-auto-save.zip`；压缩包根目录直接包含 `package.json`、`extension.js`、文档文件和运行所需的 `lib/`，共 9 个经过校验的发布文件，以满足 DCloud 插件市场的上传校验。`dist/yanghui-auto-save/` 暂存目录也会保留，便于发布前检查。
 
 ## 反馈与许可证
 

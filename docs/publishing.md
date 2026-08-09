@@ -48,7 +48,7 @@
 | metadata 校验、打包与 ZIP 检查 | 已证实 | 2026-08-09 再次完成普通测试、`NODE_OPTIONS=--unhandled-rejections=strict` 完整测试、9 文件 metadata 校验、打包及 ZIP 条目检查；实际产物记录见下方验证结果。 |
 | 干净环境导入与卸载 | 尚未完成 | staging 目录已在 HBuilderX 5.15 中全新安装；2026-08-09 第 8、9 项真实宿主阻塞项已通过，但发布候选卸载验收仍未执行。 |
 | 截图制作 | 尚未完成 | 在空白测试项目中实拍并清除敏感信息。 |
-| 仓库与 Issues 可访问性 | 尚未完成 | 当前填写的 GitHub URL 尚未返回公开页面，发布前必须创建或公开并复核。 |
+| 仓库与 Issues 可访问性 | 已证实 | 2026-08-09 已将 `yanghui040701/uniapp-auto-save-plugin` 设为公开仓库，插件代码已合并到 `main`；源码与 Issues 地址可公开访问。 |
 | 门户最终提交或发布 | 尚未完成 | 只有门户返回成功状态后才能对外声称已发布。 |
 
 ## 可复制的详细介绍
@@ -78,6 +78,7 @@
 发布候选应使用项目的打包流程生成 `yanghui-auto-save.zip`，不要上传源码仓库的随手压缩包。生成后至少确认：
 
 - ZIP 内没有 `.git`、工作树、测试缓存或其他开发机文件；
+- ZIP 根目录直接包含非空 `package.json`，不能再套一层 `yanghui-auto-save/` 目录，否则 DCloud HBuilderX 插件上传校验无法发现 manifest；
 - 解包出的插件根目录包含 `package.json`、`extension.js`、运行所需 `lib`、README、CHANGELOG 与 LICENSE；
 - `package.json` 的 ID、版本、发布者、最低 HBuilderX 和声明与本页一致；
 - 在干净的 HBuilderX 测试环境中，将解包目录命名为 `yanghui-auto-save` 并放入 `plugins` 目录，重启后能加载、配置、保存及卸载；
@@ -90,7 +91,7 @@
 - 验证日期：`2026-08-06`。
 - 安装方式：仅在确认目标不存在后，新建 `plugins/yanghui-auto-save` 并复制 staging；9 个文件逐项 SHA-256 与 `dist/yanghui-auto-save` 一致。HBuilderX 日志确认插件发现、激活成功。
 - 自动验证：普通 `npm test` 与 `NODE_OPTIONS=--unhandled-rejections=strict npm test` 均为 156/156 PASS；`npm run validate` 验证 9 个发布文件；`npm run package`、`git diff --check` 均 PASS。
-- 最终产物：`dist/yanghui-auto-save.zip`，12741 bytes，SHA-256 `BB626B2841F5409BE86DD5FA6A7B8B0555B7EFC9848364A5E344706156A69C93`；ZIP 仅含单一 `yanghui-auto-save/` 根目录下的 9 个允许文件。
+- 当时产物：`dist/yanghui-auto-save.zip`，12741 bytes，SHA-256 `BB626B2841F5409BE86DD5FA6A7B8B0555B7EFC9848364A5E344706156A69C93`；当时 ZIP 将 9 个文件放在 `yanghui-auto-save/` 子目录。该结构后来被 DCloud HBuilderX 插件上传校验明确拒绝，本条仅保留历史证据，不能再作为上传候选。
 - 环境隔离：真实 HBuilderX 中原有 `z-auto-saver` 也会在 1000 ms 后保存。为避免归因歧义，仅通过 HBuilderX 插件配置 UI 临时设为 `false`；矩阵结束后已恢复为 `true`。测试文件均位于打包目录下的临时忽略目录，不涉及用户项目。
 
 | 序号 | 结果 | 证据 |
@@ -129,6 +130,13 @@
 
 Task 8 宿主阻塞结论：**READY**。第 8、9 项阻塞均由新构建真实宿主证据关闭；第 10 项只沿用并明确标注旧构建 PASS，新锁尝试不计入通过。这里的 READY 仅表示 Task 8 本地宿主门禁通过；插件 ID 唯一性、公开仓库、截图、卸载验收和门户最终提交等发布清单项目仍未完成，不能声称已发布。
 
+### 2026-08-09 DCloud 市场 ZIP 根目录修复
+
+- 首次上传旧 ZIP 时，DCloud 返回“插件包中未包含文件 package.json 或 package.json 内容为空”。解包检查确认旧 ZIP 的首层是 `yanghui-auto-save/`，`package.json` 位于第二层，而 HBuilderX 插件上传校验要求它直接位于 ZIP 根目录。
+- 打包测试先改为要求 9 个白名单文件直接位于 ZIP 根目录，并在旧脚本上以实际条目差异失败；随后打包脚本改用 `ZipFile.CreateFromDirectory(..., includeBaseDirectory: false)`，避免再引入 staging 目录名。
+- 修复后定向打包测试通过；普通、`NODE_OPTIONS=--unhandled-rejections=strict` 和打包内置全量测试均为 167/167，通过 9 文件 metadata 校验。
+- 新上传候选仍为 `dist/yanghui-auto-save.zip`：13,560 bytes，SHA-256 `F795ECC520B79A5FF3E8F1AF8418B1A79E59354B27762B1413951D590E9863FE`。ZIP 共 9 个文件，根目录中存在且仅存在一个非空 `package.json`，没有 `yanghui-auto-save/` 外层目录。
+
 ## 截图清单
 
 1. 插件配置页：同时显示 `enabled` 与 `delay`，不带个人路径、项目源码或其他敏感信息。
@@ -164,7 +172,7 @@ Task 8 宿主阻塞结论：**READY**。第 8、9 项阻塞均由新构建真实
 - [ ] 本人 DCloud 账号可以登录，身份与联系信息按当前页面真实填写。
 - [ ] 已选择 HBuilderX 插件类型，分类显示正确。
 - [ ] `yanghui-auto-save` 已在登录后的创建/提交表单完成最终唯一性检查。
-- [ ] 发行 ZIP 来自项目打包流程，文件名和内部版本都是 1.0.0。
+- [ ] 发行 ZIP 来自项目打包流程，文件名和内部版本都是 1.0.0，且 `package.json` 直接位于 ZIP 根目录。
 - [ ] 严格 metadata 校验、完整测试与干净环境本地导入测试均有本次记录。
 - [ ] README、CHANGELOG、LICENSE、源码与问题反馈链接可访问。
 - [ ] 权限、数据与广告声明均与实际代码及 `package.json` 一致。
@@ -188,4 +196,4 @@ Task 8 宿主阻塞结论：**READY**。第 8、9 项阻塞均由新构建真实
 
 登录后的发布门户字段、身份验证要求、图片尺寸、审核策略和操作入口可能随时间变化，也可能因账号或插件类型不同而变化，提交时须按实际页面复核。此复核范围不包含已由官方规则证实的当前价格状态：HBuilderX 编辑器插件不能设置价格，本插件按平台产品类型规则免费；MIT 则是作者独立选择的开源许可证。
 
-另一个发布前人工项：截至在线复核时，manifest 中填写的 GitHub 仓库与 Issues URL 尚未返回公开仓库页面。必须先创建或公开对应仓库并确认两个链接可访问，再勾选提交检查清单；URL 格式正确不等于资源已经存在。
+仓库状态复核：2026-08-09 已将 manifest 中填写的 GitHub 仓库设为公开，插件代码已通过 PR 合并到 `main`，源码与 Issues URL 均可公开访问。后续若调整仓库名称、可见性或 Issues 设置，发布新版本前仍需重新检查这些链接。
