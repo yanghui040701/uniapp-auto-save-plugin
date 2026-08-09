@@ -189,27 +189,27 @@ try {
         Copy-Item -LiteralPath $entry.Source -Destination $entry.Destination
     }
 
-    Compress-Archive -LiteralPath $stagingDir -DestinationPath $zipPath -CompressionLevel Optimal
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $stagingDir,
+        $zipPath,
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $false
+    )
     $zipPath = Assert-SafeChildPath -Root $root -Candidate $zipPath -Label 'zip'
 
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
     try {
         $normalizedEntries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
         $actualFiles = @($normalizedEntries | Where-Object { -not $_.EndsWith('/') } | Sort-Object)
-        $expectedFiles = @($expectedAllowlist | ForEach-Object { "yanghui-auto-save/$_" } | Sort-Object -CaseSensitive)
+        $expectedFiles = @($expectedAllowlist | Sort-Object -CaseSensitive)
         $actualFiles = @($actualFiles | Sort-Object -CaseSensitive)
         $difference = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles -CaseSensitive)
         if ($actualFiles.Count -ne 9 -or $difference.Count -ne 0) {
             throw 'PACKAGE_ARCHIVE_INVALID: ZIP file entries do not match the validator allowlist'
         }
 
-        $roots = @($normalizedEntries | Where-Object { $_ } | ForEach-Object { ($_ -split '/', 2)[0] } | Sort-Object -Unique)
-        if ($roots.Count -ne 1 -or $roots[0] -ne 'yanghui-auto-save') {
-            throw 'PACKAGE_ARCHIVE_INVALID: ZIP must contain one yanghui-auto-save root directory'
-        }
-
-        $allowedDirectories = @('yanghui-auto-save/', 'yanghui-auto-save/lib/')
+        $allowedDirectories = @('lib/')
         $unexpectedDirectories = @($normalizedEntries | Where-Object {
             $_.EndsWith('/') -and $_ -notin $allowedDirectories
         })
