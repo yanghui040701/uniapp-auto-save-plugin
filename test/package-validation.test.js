@@ -32,7 +32,7 @@ const CANONICAL_FILES = [
 
 const VALID_MANIFEST = {
   id: 'yanghui-auto-save',
-  version: '1.0.0',
+  version: '1.0.1',
   dependencies: {}
 };
 
@@ -56,7 +56,7 @@ function createPackagingFixture(t, testScript = 'node -e "process.exit(0)"') {
   const root = createDistributionFixture(t, {
     id: 'yanghui-auto-save',
     name: 'Packaging fixture',
-    version: '1.0.0',
+    version: '1.0.1',
     scripts: {
       test: testScript,
       validate: 'node scripts/validate-package.js'
@@ -169,6 +169,18 @@ test('invalid package.json JSON is reported without throwing', (t) => {
   assert.match(result.errors.join('\n'), /JSON/);
 });
 
+test('previous plugin release version is rejected', (t) => {
+  const root = createDistributionFixture(t, {
+    id: 'yanghui-auto-save',
+    version: '1.0.0',
+    dependencies: {}
+  });
+
+  const result = validateDistribution(root);
+
+  assert.match(result.errors.join('\n'), /插件版本不是 1\.0\.1/);
+});
+
 test('non-object package.json values are reported without throwing', async (t) => {
   for (const [name, source] of [
     ['null', 'null'],
@@ -199,7 +211,7 @@ test('malformed and populated runtime dependency fields are rejected', async (t)
     await t.test(name, (t) => {
       const root = createDistributionFixture(t, {
         id: 'yanghui-auto-save',
-        version: '1.0.0',
+        version: '1.0.1',
         ...dependencyFields
       });
 

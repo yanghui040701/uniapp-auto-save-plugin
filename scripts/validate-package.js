@@ -108,7 +108,7 @@ function validateDistribution(root) {
   }
 
   if (manifest.id !== 'yanghui-auto-save') errors.push('插件 ID 不正确');
-  if (manifest.version !== '1.0.0') errors.push('插件版本不是 1.0.0');
+  if (manifest.version !== '1.0.1') errors.push('插件版本不是 1.0.1');
 
   for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
     if (!Object.hasOwn(manifest, field)) continue;
