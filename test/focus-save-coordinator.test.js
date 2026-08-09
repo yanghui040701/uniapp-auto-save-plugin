@@ -222,6 +222,36 @@ test('forced call upgrades an automatic flight before it reads suppression', asy
   assert.deepEqual(calls, ['native', 'prompt']);
 });
 
+test('forced call upgrades an automatic flight while suppression read is pending', async () => {
+  const suppression = deferred();
+  const stateStarted = deferred();
+  const calls = [];
+  const coordinator = createFocusSaveCoordinator({
+    runtime: {
+      isNativeFocusSaveEnabled: () => { calls.push('native'); return false; },
+      promptNativeFocusSave: async () => { calls.push('prompt'); return 'dismiss'; }
+    },
+    state: {
+      isSuppressed: () => {
+        calls.push('state');
+        stateStarted.resolve();
+        return suppression.promise;
+      },
+      suppress: () => { calls.push('suppress'); return true; }
+    }
+  });
+  const automatic = coordinator.ensure();
+  await stateStarted.promise;
+  assert.deepEqual(calls, ['native', 'state']);
+
+  const forced = coordinator.ensure({ force: true });
+  assert.equal(forced, automatic);
+  suppression.resolve(true);
+  await Promise.all([automatic, forced]);
+
+  assert.deepEqual(calls, ['native', 'state', 'prompt']);
+});
+
 test('a completed flight is cleared so a later check runs again', async () => {
   const item = fixture();
   const first = item.coordinator.ensure();
