@@ -216,8 +216,10 @@ test('1.0.1 release copy uses the published metadata and consent-based focus-sav
 
   assert.equal(readme.split(/\r?\n/)[0], `# ${manifest.displayName}`);
   assert.doesNotMatch(readme, /自动保存（防抖增强）/);
+  assert.doesNotMatch(readme, /^# 编辑时自动保存$/m);
   assert.deepEqual(changelogRelease(changelog), { version: '1.0.1', date: '2026-08-09' });
   assert.equal(fields.get('插件名称'), manifest.displayName);
+  assert.notEqual(fields.get('插件名称'), '编辑时自动保存');
   assert.equal(fields.get('版本'), manifest.version);
   assert.equal(fields.get('短描述'), manifest.description);
   assert.deepEqual(marketplaceRelease(fields.get('更新日志')), { version: '1.0.1', date: '2026-08-09' });
