@@ -67,6 +67,36 @@ test('filters untitled, non-file, clean, and read-only documents', () => {
   assert.equal(isSaveCandidate(document('a.vue'), false), true);
 });
 
+test('rejects documents without a complete local file URI', () => {
+  const fileNameOnly = document('file-name-only.vue');
+  delete fileNameOnly.uri;
+  const scenarios = [
+    { name: 'missing URI', value: fileNameOnly },
+    {
+      name: 'missing scheme',
+      value: document('missing-scheme.vue', {
+        uri: { fsPath: 'C:\\project\\missing-scheme.vue' }
+      })
+    },
+    {
+      name: 'missing filesystem path',
+      value: document('missing-path.vue', { uri: { scheme: 'file' } })
+    },
+    {
+      name: 'empty filesystem path',
+      value: document('empty-path.vue', { uri: { scheme: 'file', fsPath: '' } })
+    },
+    {
+      name: 'non-string filesystem path',
+      value: document('invalid-path.vue', { uri: { scheme: 'file', fsPath: null } })
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    assert.equal(isSaveCandidate(scenario.value), false, scenario.name);
+  }
+});
+
 test('debounces repeated edits into one save', async () => {
   const clock = createClock();
   const active = document('index.vue');
@@ -86,6 +116,88 @@ test('debounces repeated edits into one save', async () => {
   assert.equal(clock.pending()[0].delay, 1000);
   await clock.runLatest();
   assert.equal(saves, 1);
+});
+
+test('serializes a debounced edit behind an unresolved save', async () => {
+  const clock = createClock();
+  const active = document('index.vue');
+  const firstSave = createDeferred();
+  let saveCalls = 0;
+  let activeSaves = 0;
+  let maxActiveSaves = 0;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => ({ enabled: true, delay: 1000 }),
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => {
+      saveCalls += 1;
+      activeSaves += 1;
+      maxActiveSaves = Math.max(maxActiveSaves, activeSaves);
+      try {
+        if (saveCalls === 1) await firstSave.promise;
+      } finally {
+        activeSaves -= 1;
+      }
+    },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+
+  controller.handleDocumentChange({ document: active });
+  const initialRun = clock.runLatest();
+  await new Promise(setImmediate);
+  assert.equal(saveCalls, 1);
+
+  controller.handleDocumentChange({ document: active });
+  const followUpRun = clock.runLatest();
+  await new Promise(setImmediate);
+  const callsBeforeInitialSaveSettled = saveCalls;
+
+  firstSave.resolve();
+  await Promise.all([initialRun, followUpRun]);
+
+  assert.equal(callsBeforeInitialSaveSettled, 1);
+  assert.equal(saveCalls, 2);
+  assert.equal(maxActiveSaves, 1);
+});
+
+test('disabling cancels a follow-up waiting behind an issued save', async () => {
+  const clock = createClock();
+  const settings = { enabled: true, delay: 1000 };
+  const active = document('index.vue');
+  const firstSave = createDeferred();
+  let saveCalls = 0;
+  let initialSaveCompleted = false;
+  const controller = createAutoSaveController({
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    getSettings: () => settings,
+    getActiveSnapshot: async () => ({ document: active, readOnly: false }),
+    saveActiveDocument: async () => {
+      saveCalls += 1;
+      if (saveCalls === 1) {
+        await firstSave.promise;
+        initialSaveCompleted = true;
+      }
+    },
+    reportSaveError: () => assert.fail('unexpected error')
+  });
+
+  controller.handleDocumentChange({ document: active });
+  const initialRun = clock.runLatest();
+  await new Promise(setImmediate);
+
+  controller.handleDocumentChange({ document: active });
+  const followUpRun = clock.runLatest();
+  await new Promise(setImmediate);
+  settings.enabled = false;
+  controller.handleConfigurationChange();
+
+  firstSave.resolve();
+  await Promise.all([initialRun, followUpRun]);
+
+  assert.equal(initialSaveCompleted, true);
+  assert.equal(saveCalls, 1);
 });
 
 test('an ineligible change cancels older pending work', () => {

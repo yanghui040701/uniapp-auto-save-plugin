@@ -172,7 +172,7 @@ test('manifest-backed marketplace values stay synchronized', () => {
   assert.equal(linkTarget(fields.get('问题反馈')), manifest.bugs);
   assert.equal(fields.get('短描述'), manifest.description);
   assert.ok([...fields.get('短描述')].length <= 30, 'marketplace short description must be at most 30 characters');
-  assert.equal(fields.get('发行 ZIP'), `${manifest.id}-${manifest.version}.zip`);
+  assert.equal(fields.get('发行 ZIP'), `${manifest.id}.zip`);
   assert.deepEqual(marketplaceRelease(fields.get('更新日志')), changelogRelease(read('CHANGELOG.md')));
 });
 

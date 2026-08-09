@@ -27,7 +27,7 @@
 | 已验证环境 | Windows，HBuilderX 5.15.2026070915；2026-08-09 已完成只读修复与命令入口真实宿主复测 |
 | 源码地址 | [GitHub 仓库](https://github.com/yanghui040701/uniapp-auto-save-plugin) |
 | 问题反馈 | [GitHub Issues](https://github.com/yanghui040701/uniapp-auto-save-plugin/issues) |
-| 发行 ZIP | yanghui-auto-save-1.0.0.zip |
+| 发行 ZIP | yanghui-auto-save.zip |
 | 截图建议 | 插件配置页；首次原生失焦保存授权对话框；仅在当前门户明确要求时增加市场封面或功能图。 |
 | 审核备注 | 仅监听 HBuilderX 文本与配置事件，并调用 workbench.action.files.save 保存当前活动文件；防抖到期后使用 Node.js `fs.promises.access(..., W_OK)` 查询本地路径权限，不读取文件内容、不获取写句柄、不执行全部保存、不直接改写文件、不联网，无第三方运行依赖。一次性提示状态在 appData 不可用时回退用户主目录；目录创建或写入失败时，状态可能无法持久化。 |
 | 个人/学生发布说明 | 使用本人 DCloud 账号，按门户实际要求如实选择个人身份并完成页面当时要求的验证或联系信息；学生身份不预设额外豁免，也不虚构企业资料。 |
@@ -75,7 +75,7 @@
 
 ## 发行 ZIP 与本地导入检查
 
-发布候选应使用项目的打包流程生成 `yanghui-auto-save-1.0.0.zip`，不要上传源码仓库的随手压缩包。生成后至少确认：
+发布候选应使用项目的打包流程生成 `yanghui-auto-save.zip`，不要上传源码仓库的随手压缩包。生成后至少确认：
 
 - ZIP 内没有 `.git`、工作树、测试缓存或其他开发机文件；
 - 解包出的插件根目录包含 `package.json`、`extension.js`、运行所需 `lib`、README、CHANGELOG 与 LICENSE；
