@@ -24,7 +24,7 @@
 | 广告声明 | 无 |
 | 平台 | HBuilderX 桌面编辑器；不是手机 App 插件。当前仅 Windows 已验证，macOS 与 Linux 未声明为已验证。 |
 | 最低 HBuilderX | 3.2.3+ |
-| 已验证环境 | Windows，HBuilderX 5.15.2026070915；只读修复后的完整宿主矩阵仍待复测 |
+| 已验证环境 | Windows，HBuilderX 5.15.2026070915；2026-08-09 已完成只读修复与命令入口真实宿主复测 |
 | 源码地址 | [GitHub 仓库](https://github.com/yanghui040701/uniapp-auto-save-plugin) |
 | 问题反馈 | [GitHub Issues](https://github.com/yanghui040701/uniapp-auto-save-plugin/issues) |
 | 发行 ZIP | yanghui-auto-save-1.0.0.zip |
@@ -45,8 +45,8 @@
 | 个人身份与门户字段 | 门户当天复核 | 登录后按页面当时要求确认个人身份、联系信息、协议与实际必填字段；没有一手依据证明学生有独立入口或豁免。 |
 | 图片规格、操作按钮与审核流程 | 门户当天复核 | 是否需要封面、图片规格、按钮名称以及是否进入审核，以提交时门户实际界面为准。 |
 | 插件 ID 唯一性 | 尚未完成 | 必须在登录后的创建或提交表单最终校验；公开搜索不能替代此步骤。 |
-| metadata 校验、打包与 ZIP 检查 | 已证实 | 2026-08-06 已完成普通测试、`NODE_OPTIONS=--unhandled-rejections=strict` 完整测试、9 文件 metadata 校验、打包及 ZIP 条目检查；实际产物记录见下方验证结果。 |
-| 干净环境导入与卸载 | 尚未完成 | staging 目录已在 HBuilderX 5.15 中全新安装并执行过修复前矩阵；只读修复已通过自动化与 Windows 临时文件探针，但第 8、9 项真实宿主复测及发布候选卸载验收仍未完成。 |
+| metadata 校验、打包与 ZIP 检查 | 已证实 | 2026-08-09 再次完成普通测试、`NODE_OPTIONS=--unhandled-rejections=strict` 完整测试、9 文件 metadata 校验、打包及 ZIP 条目检查；实际产物记录见下方验证结果。 |
+| 干净环境导入与卸载 | 尚未完成 | staging 目录已在 HBuilderX 5.15 中全新安装；2026-08-09 第 8、9 项真实宿主阻塞项已通过，但发布候选卸载验收仍未执行。 |
 | 截图制作 | 尚未完成 | 在空白测试项目中实拍并清除敏感信息。 |
 | 仓库与 Issues 可访问性 | 尚未完成 | 当前填写的 GitHub URL 尚未返回公开页面，发布前必须创建或公开并复核。 |
 | 门户最终提交或发布 | 尚未完成 | 只有门户返回成功状态后才能对外声称已发布。 |
@@ -106,15 +106,28 @@
 | 9 | NOT_RUN | HBuilderX 5.15 中 `Ctrl+Shift+P` 未打开命令面板；当前 Computer Use helper 又无法执行 UI 输入/状态调用。为避免继续误输入测试文件，未猜测其他快捷键。测试前后只读配置均确认 `editor.saveOnFocusLost=true`，但这不能替代命令本身的验证。 |
 | 10 | PASS | 通过隔离文件的可恢复只读属性制造保存失败；磁盘未变化，只出现一个可见 HBuilderX 保存失败对话框。额外等待 3 秒无新日志或重复对话框；取消后恢复文件可写。 |
 
-发布结论：**阻塞发布**。上表保留修复前真实宿主结果，不得把自动测试改写为宿主 PASS。只读识别修复已进入代码，但必须用重建后的 ZIP 在 HBuilderX 5.15 重新执行第 8 项，并从可用命令入口执行第 9 项；在此之前不得发布或声称完整矩阵通过。
+当时结论：**阻塞发布**。上表保留 2026-08-06 修复前真实宿主结果，不回写历史。2026-08-09 已用重建 staging 关闭第 8、9 项宿主阻塞，见下方复测记录。
 
-### Task 8 real-host fix（待宿主复测）
+### 2026-08-09 Task 8 real-host fix 与复测
 
 - 根因是 HBuilderX 5.15 未通过未文档化的 `editor.readonly` / `editor.isReadonly` 反映 Windows ReadOnly 属性。runtime 现保留这两个字段作为快速 hint，并在 debounce 到期后的活动快照阶段，仅对本地、已命名且具有 `uri.fsPath` 的文档执行异步 `fs.promises.access(fsPath, W_OK)`；I/O 完成后再次读取活动 editor，使 controller 能对等待期间的纯标签切换重新做文档 key 复核。
 - `EPERM` / `EACCES` 映射为只读，controller 因而会在调用 `workbench.action.files.save` 前静默跳过；非 `file:` URI、未命名文档和缺少稳定路径的文档不触发文件系统访问。其他 access 错误不会作为未处理拒绝逃逸，也不会被静默伪装成只读，而是保留正常 HBuilderX 保存/报错路径。
 - 自动化包含注入 filesystem 的 runtime 回归、custom thenable/同步异常/未知错误策略以及 Windows 系统临时目录 ReadOnly 集成探针；该探针在 `finally` 中恢复可写并删除 fixture。
-- Phase 4 新鲜证据：runtime 定向测试 44/44，extension 定向测试 15/15，异步 access 标签切换回归 1/1，普通与 `NODE_OPTIONS=--unhandled-rejections=strict` 全量测试均 164/164；metadata 校验 9 个文件，重建 ZIP 含 9 个条目、13728 bytes、SHA-256 `12AE973F991D6B0629EDEC2A2320AE4592ADE6241039CE4864B84FE79F448B29`。这些自动结果不改变上表真实宿主 FAIL。
-- 预检不是保存事务：检查与保存之间仍有 TOCTOU，Node `fs.access` 也不能完整覆盖所有 Windows ACL 或网络文件系统行为。只有重建发布包后的真实 HBuilderX 复测才能更新上表结果。
+- Phase 4 与最终新鲜证据：异步 access 标签切换回归 1/1，普通、`NODE_OPTIONS=--unhandled-rejections=strict` 与打包内置全量测试均 164/164；metadata 校验 9 个文件。最终 ZIP 含 9 个条目、13728 bytes、SHA-256 `12AE973F991D6B0629EDEC2A2320AE4592ADE6241039CE4864B84FE79F448B29`。
+- 预检不是保存事务：检查与保存之间仍有 TOCTOU，Node `fs.access` 也不能完整覆盖所有 Windows ACL 或网络文件系统行为。下方使用重建 staging 的独立复测表记录新结果，不改写上方 2026-08-06 历史矩阵。
+
+复测前确认已安装目录为 `plugins/yanghui-auto-save`、manifest ID 为 `yanghui-auto-save` 且仅含 9 个发布文件；关闭 HBuilderX 后从新鲜 `dist/yanghui-auto-save` 覆盖该目录，逐文件 SHA-256 9/9 一致，再启动 HBuilderX 5.15。真实宿主期间仅临时关闭 `z-auto-saver`，本插件保持 `enabled=true`、`delay=1000`，原生 `editor.saveOnFocusLost=true`。
+
+| 项目 | 结果 | 证据 |
+| --- | --- | --- |
+| 3：切页与异步权限检查 | PASS（组合证据） | 2026-08-06 真实宿主快速切页结果仍为 PASS；新增的权限访问等待期切页回归 `does not save a new active document switched during filesystem access` 本次全量与 strict 全量均通过。由于权限访问窗口极短，不把普通手动切页伪装成命中该微时序。 |
+| 8：Windows ReadOnly | PASS（新构建真实宿主） | 在独立 `readonly.vue` 设置 Windows ReadOnly 后仍可编辑；停止输入并等待 4 秒，磁盘 SHA-256 `8CB5294965AE15742DAED569DF8FB64DB8435747DA14615C207987C0CD799238` 与长度 52 均未变化，标签页持续显示 dirty `*`，未出现保存命令造成的错误对话框。之后已恢复可写。未命名入口未执行。 |
+| 9：命令入口 | PASS（新构建真实宿主） | 关闭 HBuilderX 后备份用户 `keybindings.json`，临时绑定 `Ctrl+Alt+Shift+S` 到 `yanghui-auto-save.checkFocusSave`；重启后执行快捷键，出现“失去焦点自动保存 / HBuilderX 的失去焦点自动保存已开启。”信息框。移除临时绑定后，原始与恢复 SHA-256 均为 `7F6A4DCF5AE1028718FAE78FD420A3CEE3BB7359B4BBE06164C18F8EB75BCCC4`。 |
+| 10：实际保存失败只提示一次 | PASS（沿用 2026-08-06 旧构建） | 旧构建真实宿主已用可恢复只读属性确认只出现一个保存失败对话框，额外等待 3 秒无重复。2026-08-09 曾以隐藏、10 秒上限的 `FileShare.None` helper 尝试新构建 TOCTOU，但 HBuilderX 最终写入成功，无法证明保存发生时锁仍有效，因此该次标记为 INCONCLUSIVE，不伪造新构建 PASS。自动测试 `reports one failed save and waits for a new edit before retrying` 本次仍通过。 |
+
+环境恢复：HBuilderX 已关闭；`readonly.vue` 的 ReadOnly 已恢复为 `false`；`settings.json` 原始与恢复 SHA-256 均为 `6FC3E0FD4CB22DF44B1DD423024E4ACA9003CE1168A3D8D1B3B62E4D98A6F3C7`，确认 `auto-saver.autosave=true`、本插件 `enabled=true` / `delay=1000`、`editor.saveOnFocusLost=true`；临时快捷键无残留。
+
+Task 8 宿主阻塞结论：**READY**。第 8、9 项阻塞均由新构建真实宿主证据关闭；第 10 项只沿用并明确标注旧构建 PASS，新锁尝试不计入通过。这里的 READY 仅表示 Task 8 本地宿主门禁通过；插件 ID 唯一性、公开仓库、截图、卸载验收和门户最终提交等发布清单项目仍未完成，不能声称已发布。
 
 ## 截图清单
 
@@ -132,7 +145,7 @@
 - 本地状态：只持久化 `focusSavePromptHandled: true`。首选 `<hx.env.appData>/extensions/yanghui-auto-save/state.json`；appData 不可用时回退 `~/.hbuilderx-auto-save/state.json`。
 - 网络与依赖：无网络请求、无第三方运行依赖、无遥测、无广告。
 - 通知：成功静默；仅保存失败或内部错误时提示。
-- 兼容性：manifest 最低 HBuilderX 3.2.3；Windows HBuilderX 5.15.2026070915 已执行修复前宿主矩阵，随附 Node 18/22 已验证 ReadOnly 权限探针。修复后的完整宿主矩阵、较旧 HBuilderX 与 macOS/Linux 均未验证，不得外推。
+- 兼容性：manifest 最低 HBuilderX 3.2.3；Windows HBuilderX 5.15.2026070915 已执行修复前矩阵，并于 2026-08-09 完成第 8、9 项修复后真实宿主复测；第 10 项仍明确沿用旧构建真实宿主 PASS。较旧 HBuilderX 与 macOS/Linux 均未验证，不得外推。
 
 ## 个人/学生账号逐步提交
 
