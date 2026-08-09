@@ -223,10 +223,8 @@ test('1.0.1 release copy uses the published metadata and consent-based focus-sav
   assert.deepEqual(marketplaceRelease(fields.get('更新日志')), { version: '1.0.1', date: '2026-08-09' });
 
   for (const document of [readme, publishing]) {
-    assert.match(document, /schemaVersion/);
-    assert.match(document, /focusSavePromptSuppressed/);
-    assert.match(document, /(?:只有|仅当)[^。]{0,24}明确(?:选择|点击)[“"]不再提示[”"][^。]{0,24}(?:才会|才)[^。]{0,16}(?:持久化|停止自动提醒)/);
-    assert.match(document, /关闭(?:对话框|弹窗)[^。]{0,30}(?:下次|之后|仍)[^。]{0,30}再次提示/);
+    assert.match(document, /schema v2[^。]{0,36}(?:只有|仅当)[^。]{0,16}用户?明确(?:选择|点击)[“"]不再提示[”"][^。]{0,48}focusSavePromptSuppressed[^。]{0,24}持久化[^。]{0,24}抑制状态/);
+    assert.match(document, /关闭(?:对话框|弹窗)[^。]{0,24}(?:不会|不)[^。]{0,24}持久化[^。]{0,24}抑制状态[^。]{0,24}(?:下次|之后)[^。]{0,30}再次提示/);
   }
   assert.doesNotMatch(readme, /focusSavePromptHandled/);
   assert.match(publishing, /旧版 `focusSavePromptHandled` 状态不再被视为永久拒绝/);
