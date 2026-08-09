@@ -1,7 +1,7 @@
 # Task 8 Implementer Report
 
-Date: 2026-08-09  
-Branch: `codex/hbuilderx-auto-save`  
+Date: 2026-08-09
+Branch: `codex/hbuilderx-auto-save`
 Base fix: `875aec568260ad6ef5b9b3ce3f2ba86c39945a01`
 
 ## Outcome
