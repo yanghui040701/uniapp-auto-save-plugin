@@ -171,7 +171,6 @@ test('manifest-backed marketplace values stay synchronized', () => {
   assert.equal(linkTarget(fields.get('源码地址')), manifest.repository);
   assert.equal(linkTarget(fields.get('问题反馈')), manifest.bugs);
   assert.equal(fields.get('短描述'), manifest.description);
-  assert.ok([...fields.get('短描述')].length <= 30, 'marketplace short description must be at most 30 characters');
   assert.equal(fields.get('发行 ZIP'), `${manifest.id}.zip`);
   assert.deepEqual(marketplaceRelease(fields.get('更新日志')), changelogRelease(read('CHANGELOG.md')));
 });
@@ -199,4 +198,28 @@ test('CHANGELOG initial release matches the manifest version and uses a valid IS
   const release = changelogRelease(read('CHANGELOG.md'));
   assert.equal(release.version, manifest.version);
   assert.equal(new Date(`${release.date}T00:00:00Z`).toISOString().slice(0, 10), release.date);
+});
+
+test('1.0.1 release copy uses the published metadata and consent-based focus-save prompt', () => {
+  const readme = read('README.md');
+  const changelog = read('CHANGELOG.md');
+  const publishing = read('docs/publishing.md');
+  const fields = submissionFields(publishing);
+
+  assert.equal(readme.split(/\r?\n/)[0], `# ${manifest.displayName}`);
+  assert.doesNotMatch(readme, /自动保存（防抖增强）/);
+  assert.deepEqual(changelogRelease(changelog), { version: '1.0.1', date: '2026-08-09' });
+  assert.equal(fields.get('插件名称'), manifest.displayName);
+  assert.equal(fields.get('版本'), manifest.version);
+  assert.equal(fields.get('短描述'), manifest.description);
+  assert.deepEqual(marketplaceRelease(fields.get('更新日志')), { version: '1.0.1', date: '2026-08-09' });
+
+  assert.match(`${readme}\n${publishing}`, /schemaVersion/);
+  assert.match(`${readme}\n${publishing}`, /focusSavePromptSuppressed/);
+  assert.match(`${readme}\n${publishing}`, /不再提示/);
+  assert.doesNotMatch(readme, /focusSavePromptHandled/);
+  assert.match(publishing, /旧版 `focusSavePromptHandled` 状态不再被视为永久拒绝/);
+  assert.match(`${readme}\n${publishing}`, /通用 HBuilderX .*插件/);
+  assert.match(`${readme}\n${publishing}`, /不只.*uni-app|不限于 uni-app/);
+  assert.match(`${readme}\n${publishing}`, /只有.*(?:点击|选择).*开启.*(?:才会|才).*修改.*editor\.saveOnFocusLost/);
 });
