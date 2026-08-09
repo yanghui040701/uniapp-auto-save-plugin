@@ -6,6 +6,8 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const manifest = require('../package.json');
 const { MIN_DELAY, MAX_DELAY } = require('../lib/auto-save-controller');
+const PUBLISHED_REPOSITORY = 'https://github.com/yanghui040701/uniapp-auto-save-plugin';
+const PUBLISHED_ISSUES = 'https://github.com/yanghui040701/uniapp-auto-save-plugin/issues';
 
 const requiredDocuments = ['README.md', 'CHANGELOG.md', 'docs/publishing.md'];
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -168,8 +170,8 @@ test('manifest-backed marketplace values stay synchronized', () => {
 
   for (const [field, value] of expected) assert.equal(fields.get(field), value);
   assert.deepEqual(fields.get('关键词/标签').split('、'), manifest.keywords);
-  assert.equal(linkTarget(fields.get('源码地址')), manifest.repository);
-  assert.equal(linkTarget(fields.get('问题反馈')), manifest.bugs);
+  assert.equal(linkTarget(fields.get('源码地址')), PUBLISHED_REPOSITORY);
+  assert.equal(linkTarget(fields.get('问题反馈')), PUBLISHED_ISSUES);
   assert.equal(fields.get('短描述'), manifest.description);
   assert.equal(fields.get('发行 ZIP'), `${manifest.id}.zip`);
   assert.deepEqual(marketplaceRelease(fields.get('更新日志')), changelogRelease(read('CHANGELOG.md')));
@@ -194,6 +196,12 @@ test('documentation Markdown links use valid HTTPS URLs', () => {
   }
 });
 
+test('documentation retains the published GitHub repository and Issues URLs', () => {
+  const readmeTargets = markdownLinkTargets(read('README.md'));
+  assert.ok(readmeTargets.includes(PUBLISHED_REPOSITORY));
+  assert.ok(readmeTargets.includes(PUBLISHED_ISSUES));
+});
+
 test('CHANGELOG initial release matches the manifest version and uses a valid ISO date', () => {
   const release = changelogRelease(read('CHANGELOG.md'));
   assert.equal(release.version, manifest.version);
@@ -214,9 +222,12 @@ test('1.0.1 release copy uses the published metadata and consent-based focus-sav
   assert.equal(fields.get('短描述'), manifest.description);
   assert.deepEqual(marketplaceRelease(fields.get('更新日志')), { version: '1.0.1', date: '2026-08-09' });
 
-  assert.match(`${readme}\n${publishing}`, /schemaVersion/);
-  assert.match(`${readme}\n${publishing}`, /focusSavePromptSuppressed/);
-  assert.match(`${readme}\n${publishing}`, /不再提示/);
+  for (const document of [readme, publishing]) {
+    assert.match(document, /schemaVersion/);
+    assert.match(document, /focusSavePromptSuppressed/);
+    assert.match(document, /(?:只有|仅当)[^。]{0,24}明确(?:选择|点击)[“"]不再提示[”"][^。]{0,24}(?:才会|才)[^。]{0,16}(?:持久化|停止自动提醒)/);
+    assert.match(document, /关闭(?:对话框|弹窗)[^。]{0,30}(?:下次|之后|仍)[^。]{0,30}再次提示/);
+  }
   assert.doesNotMatch(readme, /focusSavePromptHandled/);
   assert.match(publishing, /旧版 `focusSavePromptHandled` 状态不再被视为永久拒绝/);
   assert.match(`${readme}\n${publishing}`, /通用 HBuilderX .*插件/);

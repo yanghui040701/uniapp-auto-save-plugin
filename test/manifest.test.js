@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
+const PUBLISHED_REPOSITORY = 'https://github.com/yanghui040701/uniapp-auto-save-plugin';
+const PUBLISHED_ISSUES = 'https://github.com/yanghui040701/uniapp-auto-save-plugin/issues';
 
 test('manifest declares the exact plugin identity and entry point', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -16,6 +18,8 @@ test('manifest declares the exact plugin identity and entry point', () => {
     '为 HBuilderX 提供编辑时防抖自动保存，并可引导开启原生失焦自动保存，避免快速切换文件时遗漏保存。'
   );
   assert.equal(manifest.publisher, 'yanghui040701');
+  assert.equal(manifest.repository, PUBLISHED_REPOSITORY);
+  assert.equal(manifest.bugs, PUBLISHED_ISSUES);
   assert.equal(manifest.main, './extension');
   assert.deepEqual(manifest.activationEvents, ['*']);
   assert.equal(manifest.engines.HBuilderX, '^3.2.3');
